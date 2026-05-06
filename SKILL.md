@@ -60,7 +60,7 @@ description: >
 
 ### 自定义提示词
 
-编辑 `references/prompts.json` 即可自定义角色台词和提示词，无需修改代码：
+编辑 `yoimiya_skill/prompts.json` 即可自定义角色台词和提示词，无需修改代码：
 
 - `system_prompts` - 各语言的系统提示词
 - `emotion_states` - 各情绪状态的追加提示词和触发关键词
@@ -68,7 +68,7 @@ description: >
 
 ### 自定义配置
 
-编辑 `references/config.json` 即可自定义：
+编辑 `yoimiya_skill/config.json` 即可自定义：
 
 - **角色属性**：修改 `character.stats`
 - **情绪波动概率**：修改 `skill.auto_shift_probability`
@@ -82,20 +82,32 @@ description: >
 ```
 .
 ├── SKILL.md                    # 本文件（AgentSkills 格式）
-├── scripts/                    # 可执行代码
-│   ├── __init__.py
+├── README.md                   # 项目说明
+├── CHANGELOG.md                # 版本更新日志
+├── LICENSE                     # MIT 许可证
+├── requirements.txt            # 依赖列表
+├── docs/
+│   └── API.md                  # API 文档
+├── __init__.py                 # 包入口
+├── yoimiya_skill/              # Skill 主包
+│   ├── __init__.py             # 包入口
 │   ├── yoimiya_skill.py        # Skill 主类
 │   ├── emotion_manager.py      # 情绪状态管理器
 │   ├── memory.py               # 情感记忆系统
 │   ├── events.py               # 季节事件 & 小游戏
 │   ├── prompts.py              # 提示词加载器（支持热重载）
+│   ├── config.json             # 配置文件
+│   ├── prompts.json            # 提示词配置
 │   └── data/
 │       └── memory.json         # 记忆持久化文件
-├── references/                 # 参考配置
-│   ├── config.json             # 配置文件
-│   └── prompts.json            # 提示词配置
-└── tests/                      # 测试目录
-    └── test_skill.py
+├── tests/                      # 测试目录
+│   ├── __init__.py
+│   └── test_skill.py
+└── .github/                    # GitHub 配置
+    ├── ISSUE_TEMPLATE/
+    ├── workflows/
+    │   └── ci.yml              # CI 自动化测试
+    └── PULL_REQUEST_TEMPLATE.md
 ```
 
 ## 脚本说明

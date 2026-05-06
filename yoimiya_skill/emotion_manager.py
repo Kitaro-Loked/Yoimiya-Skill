@@ -45,10 +45,7 @@ class EmotionManager:
         if config_path is not None:
             self.config_path = config_path
         else:
-            # AgentSkills 格式：配置文件在 references/ 目录下
-            script_dir = os.path.dirname(__file__)
-            skill_root = os.path.dirname(script_dir)
-            self.config_path = os.path.join(skill_root, "references", "config.json")
+            self.config_path = os.path.join(os.path.dirname(__file__), "config.json")
         self._states: Dict[str, EmotionState] = {}
         self._load_config()
 
