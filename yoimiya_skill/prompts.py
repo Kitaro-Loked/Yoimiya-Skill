@@ -1,4 +1,4 @@
-"""宵宫各形态的系统提示词模板加载器
+"""宵宫角色提示词加载器
 
 所有提示词文本已从硬编码迁移至 prompts.json，支持热重载和多语言扩展。
 """
@@ -11,23 +11,8 @@ from typing import Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
-class PromptTemplate:
-    """提示词模板类，支持多语言渲染"""
-
-    def __init__(self, templates: Dict[str, str]):
-        self._templates = templates
-
-    def render(self, lang: str = "zh") -> str:
-        """根据语言渲染提示词"""
-        return self._templates.get(lang, self._templates.get("zh", ""))
-
-    def get_supported_languages(self) -> list[str]:
-        """获取支持的语言列表"""
-        return list(self._templates.keys())
-
-
 class PromptLoader:
-    """提示词加载器：从 JSON 文件加载所有提示词"""
+    """提示词加载器：从 JSON 文件加载所有提示词，支持热重载"""
 
     _instance: Optional["PromptLoader"] = None
     _prompts_data: Optional[Dict] = None
@@ -85,30 +70,37 @@ class PromptLoader:
             self._prompts_data = self._load()
         return self._prompts_data
 
-    def get_form_prompt(self, form_name: str, lang: str = "zh") -> str:
-        """获取指定形态和语言的系统提示词"""
-        forms = self.data.get("forms", {})
-        form_data = forms.get(form_name)
-        if form_data is None:
-            logger.warning(f"Form '{form_name}' not found in prompts")
-            return ""
-        return form_data.get("system_prompts", {}).get(lang, "")
+    def get_system_prompt(self, lang: str = "zh") -> str:
+        """获取统一角色系统提示词"""
+        return self.data.get("system_prompts", {}).get(lang, "")
 
-    def get_shift_message(self, form_name: str, lang: str = "zh") -> str:
-        """获取指定形态的变身台词"""
-        forms = self.data.get("forms", {})
-        form_data = forms.get(form_name)
-        if form_data is None:
+    def get_emotion_state_addition(self, state: str, lang: str = "zh") -> str:
+        """获取情绪状态追加提示词"""
+        states = self.data.get("emotion_states", {})
+        state_data = states.get(state)
+        if state_data is None:
             return ""
-        return form_data.get("shift_message", {}).get(lang, "")
+        return state_data.get("system_prompt_addition", {}).get(lang, "")
 
-    def get_switch_reply(self, form_name: str, lang: str = "zh") -> str:
-        """获取指定形态的切换回复"""
-        forms = self.data.get("forms", {})
-        form_data = forms.get(form_name)
-        if form_data is None:
-            return ""
-        return form_data.get("switch_reply", {}).get(lang, "")
+    def get_emotion_state_keywords(self, state: str) -> List[str]:
+        """获取情绪状态触发关键词"""
+        states = self.data.get("emotion_states", {})
+        state_data = states.get(state)
+        if state_data is None:
+            return []
+        return state_data.get("trigger_keywords", [])
+
+    def get_emotion_state_name(self, state: str, lang: str = "zh") -> str:
+        """获取情绪状态显示名称"""
+        states = self.data.get("emotion_states", {})
+        state_data = states.get(state)
+        if state_data is None:
+            return state
+        return state_data.get("name", {}).get(lang, state)
+
+    def get_all_emotion_states(self) -> List[str]:
+        """获取所有情绪状态名称"""
+        return list(self.data.get("emotion_states", {}).keys())
 
     def get_common_message(self, key: str, lang: str = "zh") -> str:
         """获取通用消息"""
@@ -120,17 +112,10 @@ class PromptLoader:
         meta = self.data.get("meta", {})
         return meta.get("supported_languages", ["zh"])
 
-    def get_form_names(self) -> List[str]:
-        """获取所有形态名称"""
-        return list(self.data.get("forms", {}).keys())
-
-    def get_form_display_name(self, form_name: str, lang: str = "zh") -> str:
-        """获取形态的显示名称"""
-        forms = self.data.get("forms", {})
-        form_data = forms.get(form_name)
-        if form_data is None:
-            return form_name
-        return form_data.get("name", {}).get(lang, form_name)
+    def get_character_name(self, lang: str = "zh") -> str:
+        """获取角色名称"""
+        character = self.data.get("character", {})
+        return character.get("name", {}).get(lang, "宵宫")
 
     def reload(self) -> None:
         """强制重新加载提示词"""
@@ -150,19 +135,29 @@ def get_loader() -> PromptLoader:
     return _prompt_loader
 
 
-def get_form_prompt(form_name: str, lang: str = "zh") -> str:
-    """获取指定形态和语言的系统提示词"""
-    return get_loader().get_form_prompt(form_name, lang)
+def get_system_prompt(lang: str = "zh") -> str:
+    """获取统一角色系统提示词"""
+    return get_loader().get_system_prompt(lang)
 
 
-def get_shift_message(form_name: str, lang: str = "zh") -> str:
-    """获取指定形态的变身台词"""
-    return get_loader().get_shift_message(form_name, lang)
+def get_emotion_state_addition(state: str, lang: str = "zh") -> str:
+    """获取情绪状态追加提示词"""
+    return get_loader().get_emotion_state_addition(state, lang)
 
 
-def get_switch_reply(form_name: str, lang: str = "zh") -> str:
-    """获取指定形态的切换回复"""
-    return get_loader().get_switch_reply(form_name, lang)
+def get_emotion_state_keywords(state: str) -> List[str]:
+    """获取情绪状态触发关键词"""
+    return get_loader().get_emotion_state_keywords(state)
+
+
+def get_emotion_state_name(state: str, lang: str = "zh") -> str:
+    """获取情绪状态显示名称"""
+    return get_loader().get_emotion_state_name(state, lang)
+
+
+def get_all_emotion_states() -> List[str]:
+    """获取所有情绪状态名称"""
+    return get_loader().get_all_emotion_states()
 
 
 def get_common_message(key: str, lang: str = "zh") -> str:
@@ -175,9 +170,9 @@ def get_supported_languages() -> List[str]:
     return get_loader().get_supported_languages()
 
 
-def get_form_display_name(form_name: str, lang: str = "zh") -> str:
-    """获取形态的显示名称"""
-    return get_loader().get_form_display_name(form_name, lang)
+def get_character_name(lang: str = "zh") -> str:
+    """获取角色名称"""
+    return get_loader().get_character_name(lang)
 
 
 def reload_prompts() -> None:

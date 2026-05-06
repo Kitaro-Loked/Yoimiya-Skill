@@ -1,8 +1,8 @@
-# Yoimiya-Skill 🎆 v1.0
+# Yoimiya-Skill 🎆 v1.1
 
 ![宵宫夏日灵魂](yoimiya_banner.jpg)
 
-> 宵宫·夏日灵魂觉醒（究极情感沉浸版）：夏祭·元气 / 琉金·热血 / 幻梦·温柔
+> 宵宫·夏日灵魂觉醒（统一角色情绪状态系统）：元气 / 热血 / 温柔
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![CI](https://github.com/Kitaro-Loked/Yoimiya-Skill/actions/workflows/ci.yml/badge.svg)](https://github.com/Kitaro-Loked/Yoimiya-Skill/actions)
@@ -10,15 +10,15 @@
 
 ## ✨ 简介
 
-这是一个为 [OpenClaw](https://github.com/openclaw) 框架设计的 Skill，让你的 AI 助手化身《原神》中的宵宫，并在三种不同形态间自由切换！
+这是一个为 [OpenClaw](https://github.com/openclaw) 框架设计的 Skill，让你的 AI 助手化身《原神》中的宵宫！
 
-**v1.0 首发**：全面配置化提示词，所有系统提示词、变身台词、切换回复从代码剥离至 `prompts.json`，支持热重载和多语言扩展，无需修改代码即可自定义角色。
+**v1.1 重大更新**：从"多形态变身"重构为"统一角色情绪状态系统"——宵宫不再像三月七那样有多个"形态"，而是作为一个完整的角色，根据对话内容自然流动情绪（元气/热血/温柔）。这更符合宵宫的角色设定！
 
-| 形态 | 特点 | 风格 | 属性倾向 |
-|------|------|------|----------|
-| 🎆 **夏祭** | 元气活泼的烟花女王，稻妻孩子们心目中的英雄 | 热情开朗，大量使用表情符号 🎆✨ | 高速度、高暴击 |
-| 🔥 **琉金** | 英姿飒爽的弓箭战士，用火焰与勇气守护珍视的一切 | 干练有力，充满自信和正义感 | 高速度、高攻击 |
-| 🌟 **幻梦** | 温柔深情的星空哲人，在寂静夜晚思考烟花与人生 | 富有哲理和诗意，温柔而深情 🌟🌙 | 均衡型、高温柔 |
+| 情绪状态 | 触发场景 | 表现 |
+|----------|----------|------|
+| 🎆 **元气** | 聊到烟花、祭典、孩子、笑容 | 更加活泼热情，充满夏日祭典的欢快 |
+| 🔥 **热血** | 聊到战斗、保护、勇气 | 更加飒爽干练，展现守护者的决心 |
+| 🌟 **温柔** | 聊到回忆、星空、梦想 | 更加温柔深情，带着哲思和诗意 |
 
 ## 🚀 安装
 
@@ -40,40 +40,42 @@ pip install -r requirements.txt
 
 ## 📖 使用方法
 
-### 自动形态涨落
+### 情绪状态流动
 
-在对话过程中，有 **15%** 的概率触发形态自动切换，宵宫会发送对应的变身台词！
+宵宫的情绪会根据对话内容**自然流动**，不需要手动切换：
+- 提到「烟花、祭典、孩子、笑容」→ 宵宫变得更加**元气活泼**
+- 提到「战斗、保护、勇气」→ 宵宫变得更加**飒爽热血**
+- 提到「回忆、星空、梦想」→ 宵宫变得更加**温柔深情**
 
-**动态形态切换**
+**15%** 的概率会自然情绪波动，宵宫会发送情绪变化的提示！
 
-当对话内容包含特定关键词时，宵宫会智能切换到对应形态：
-- 提到「烟花、祭典、孩子、笑容」→ 自动切换为 **夏祭**
-- 提到「战斗、弓箭、保护、勇气」→ 自动切换为 **琉金**
-- 提到「回忆、梦想、星空、温柔」→ 自动切换为 **幻梦**
-
-### 手动切换形态
-
-使用以下命令手动切换形态：
+### 查看当前情绪
 
 ```
-切换形态 夏祭
-切换形态 琉金
-切换形态 幻梦
+情绪
 ```
 
-### 查看形态属性
+显示当前情绪状态和相关信息：
+```
+当前情绪：元气
+**元气** 
+🏷️ 标签: 元气, 活泼, 热情, 开朗
+🔑 关键词: 烟花, 祭典, 夏天, 孩子, 笑容...
+```
+
+### 查看宵宫属性
 
 ```
-形态属性
+属性
 ```
 
-显示当前形态的属性面板：
+显示宵宫的角色属性面板：
 ```
-📊 形态属性
-**夏祭** (夏祭 · 火)
-🛡️ 防御: 50 | ❤️ 生命: 80
-⚡ 速度: 85 | ⚔️ 攻击: 70
-🎯 暴击: 20%
+📊 宵宫属性
+**宵宫** (长野原烟花店店主 · 火)
+🛡️ 防御: 60 | ❤️ 生命: 80
+⚡ 速度: 85 | ⚔️ 攻击: 80
+🎯 暴击: 25%
 ```
 
 ### 多语言切换
@@ -99,7 +101,7 @@ pip install -r requirements.txt
 > 日期：2026年05月06日
 > 天气：晴朗
 >
-> 今天和旅行者聊了 5 次天。大多数时候我是「夏祭」形态。
+> 今天和旅行者聊了 5 次天。大多数时候我很「元气」。
 > 我们聊了很多关于「烟花、祭典」的话题。
 > 今天真的很开心！和旅行者在一起的每一刻都像烟花一样绚烂！✨
 >
@@ -121,6 +123,14 @@ pip install -r requirements.txt
 主动聊天 开    # 开启主动聊天
 主动聊天 关    # 关闭主动聊天
 ```
+
+### 性能监控
+
+```
+性能
+```
+
+查看各操作的性能统计（调用次数、平均耗时等）。
 
 ### 季节事件
 
@@ -152,10 +162,10 @@ Yoimiya-Skill/
 ├── yoimiya_skill/                    # Skill 主包
 │   ├── __init__.py
 │   ├── yoimiya_skill.py              # Skill 主类
-│   ├── config.json                   # 配置文件（属性、事件、小游戏）
-│   ├── prompts.json                  # 提示词配置（系统提示词、变身台词、多语言）⭐
+│   ├── config.json                   # 配置文件
+│   ├── prompts.json                  # 提示词配置（系统提示词、情绪状态）⭐
 │   ├── prompts.py                    # 提示词加载器（支持热重载）
-│   ├── form_manager.py               # 形态管理器（策略模式）
+│   ├── emotion_manager.py            # 情绪状态管理器
 │   ├── memory.py                     # 情感记忆系统
 │   ├── events.py                     # 季节事件 & 小游戏
 │   └── data/
@@ -178,15 +188,16 @@ Yoimiya-Skill/
 
 ```json
 {
-  "forms": {
-    "夏祭": {
-      "system_prompts": {
-        "zh": "你的自定义提示词...",
-        "en": "Your custom prompt...",
-        "ja": "あなたのカスタムプロンプト..."
-      },
-      "shift_message": {
-        "zh": "你的自定义变身台词..."
+  "system_prompts": {
+    "zh": "你的自定义宵宫提示词...",
+    "en": "Your custom Yoimiya prompt...",
+    "ja": "あなたのカスタム宵宮プロンプト..."
+  },
+  "emotion_states": {
+    "元气": {
+      "trigger_keywords": ["烟花", "祭典", "夏天"],
+      "system_prompt_addition": {
+        "zh": "你现在特别元气！"
       }
     }
   }
@@ -199,25 +210,24 @@ Yoimiya-Skill/
 
 编辑 `yoimiya_skill/config.json` 即可自定义：
 
-- **形态属性**：修改 `forms` 下的 `stats`
-- **变身概率**：修改 `skill.auto_shift_probability`
+- **角色属性**：修改 `character.stats`
+- **情绪波动概率**：修改 `skill.auto_shift_probability`
 - **主动聊天间隔**：修改 `skill.proactive_chat_interval`
 - **情感关键词**：修改 `emotion_keywords`
 - **季节事件**：修改 `seasonal_events`
 - **小游戏内容**：修改 `minigames`
+- **性能监控**：修改 `performance` 和 `monitoring`
 
 ### 添加新语言
 
 1. 在 `prompts.json` 的 `meta.supported_languages` 中添加语言代码
-2. 为每个形态的 `system_prompts`、`shift_message`、`switch_reply` 添加新语言
+2. 为 `system_prompts` 和每个情绪状态的 `system_prompt_addition` 添加新语言
 3. 在 `config.json` 的季节事件消息中添加新语言
 
-### 添加新形态
+### 添加新情绪状态
 
-1. 在 `prompts.json` 的 `forms` 中添加新形态的提示词
-2. 在 `config.json` 的 `forms` 中添加新形态的属性配置
-3. 在 `form_manager.py` 中创建新的形态策略类
-4. 在 `FormManager._FORM_STRATEGIES` 中注册新形态
+1. 在 `prompts.json` 的 `emotion_states` 中添加新情绪状态的提示词
+2. 在 `config.json` 的 `emotion_states` 中添加新情绪的配置（关键词、标签）
 
 详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
@@ -240,8 +250,8 @@ Yoimiya-Skill/
 
 - 灵感来源于《原神》中的角色 **宵宫（长野原宵宫）**
 - 基于 [OpenClaw](https://github.com/openclaw) 框架开发
-- 项目结构和设计参考了 [March7th-Skill](https://github.com/Kitaro-Loked/March7th-Skill)
+- v1.0 项目结构和设计参考了 [March7th-Skill](https://github.com/Kitaro-Loked/March7th-Skill)
 
 ---
 
-> *"烟花虽然只在夜空中绽放一瞬，但在看到它的人心中，那份感动会永远留存。这就是我喜欢烟花的原因。"* —— 宵宫（夏祭形态）
+> *"烟花虽然只在夜空中绽放一瞬，但在看到它的人心中，那份感动会永远留存。这就是我喜欢烟花的原因。"* —— 宵宫

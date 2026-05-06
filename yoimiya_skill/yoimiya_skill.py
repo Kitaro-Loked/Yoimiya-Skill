@@ -1,18 +1,19 @@
-"""Yoimiya Summer Soul Skill v1.0
+"""Yoimiya Summer Soul Skill v1.1
 
-宵宫·夏日灵魂觉醒（究极情感沉浸版）
-功能：情感记忆系统、形态属性系统、多语言支持、动态形态切换、
+宵宫·夏日灵魂觉醒（统一角色情绪状态系统）
+功能：情感记忆系统、情绪状态系统、多语言支持、动态情绪切换、
       季节事件感知、互动小游戏（烟花/炸弹/回忆）、日记功能、
-      主动聊天系统、JSON 配置化提示词
+      主动聊天系统、JSON 配置化提示词、性能监控
 """
 
 import json
 import logging
 import os
 import random
+import time
 from typing import Any, Dict, List, Optional
 
-from .form_manager import FormManager, FormStrategy
+from .emotion_manager import EmotionManager
 from .memory import EmotionMemory
 from .events import SeasonalEventManager, MinigameManager
 
@@ -40,13 +41,79 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-def setup_logging(level: int = logging.INFO) -> None:
-    """配置日志系统"""
+def setup_logging(level: int = logging.INFO, structured: bool = False) -> None:
+    """配置日志系统
+    
+    Args:
+        level: 日志级别
+        structured: 是否使用结构化日志（JSON格式）
+    """
+    if structured:
+        # 结构化日志格式
+        fmt = '{"timestamp":"%(asctime)s","level":"%(levelname)s","logger":"%(name)s","message":"%(message)s"}'
+    else:
+        fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    
     logging.basicConfig(
         level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        format=fmt,
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+
+class PerformanceTracker:
+    """性能追踪器"""
+
+    def __init__(self, enabled: bool = True):
+        self.enabled = enabled
+        self._timings: Dict[str, List[float]] = {}
+
+    def track(self, name: str):
+        """上下文管理器，用于追踪代码块执行时间"""
+        return _PerformanceContext(self, name)
+
+    def record(self, name: str, duration: float) -> None:
+        """记录一次执行时间"""
+        if not self.enabled:
+            return
+        if name not in self._timings:
+            self._timings[name] = []
+        self._timings[name].append(duration)
+
+    def get_stats(self, name: str) -> Dict[str, float]:
+        """获取性能统计"""
+        times = self._timings.get(name, [])
+        if not times:
+            return {}
+        return {
+            "count": len(times),
+            "avg": sum(times) / len(times),
+            "min": min(times),
+            "max": max(times),
+        }
+
+    def get_all_stats(self) -> Dict[str, Dict[str, float]]:
+        """获取所有性能统计"""
+        return {name: self.get_stats(name) for name in self._timings}
+
+
+class _PerformanceContext:
+    """性能追踪上下文"""
+
+    def __init__(self, tracker: PerformanceTracker, name: str):
+        self.tracker = tracker
+        self.name = name
+        self.start_time = 0.0
+
+    def __enter__(self):
+        self.start_time = time.time()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        duration = time.time() - self.start_time
+        self.tracker.record(self.name, duration)
+        if duration > 1.0:  # 超过1秒记录警告
+            logger.warning(f"Slow operation: {self.name} took {duration:.3f}s")
 
 
 class YoimiyaSummerSoul(BaseSkill):
@@ -54,17 +121,20 @@ class YoimiyaSummerSoul(BaseSkill):
 
     def __init__(self, config_path: Optional[str] = None):
         super().__init__()
-        setup_logging()
 
         self._config_path = config_path or self._get_default_config_path()
         self._load_skill_config()
+
+        # 配置日志
+        log_level = getattr(logging, self._skill_config.get("log_level", "INFO"), logging.INFO)
+        structured_logging = self._skill_config.get("structured_logging", False)
+        setup_logging(level=log_level, structured=structured_logging)
 
         self.name: str = self._skill_config.get("name", "Yoimiya_Summer_Soul_Skill")
         self.description: str = self._skill_config.get(
             "description", "宵宫·夏日灵魂觉醒"
         )
-        self.version: str = self._skill_config.get("version", "1.0.0")
-        self.current_form: str = self._skill_config.get("default_form", "夏祭")
+        self.version: str = self._skill_config.get("version", "1.1.0")
         self.language: str = self._skill_config.get("default_language", "zh")
         self.auto_shift_probability: float = self._skill_config.get(
             "auto_shift_probability", 0.15
@@ -82,8 +152,17 @@ class YoimiyaSummerSoul(BaseSkill):
             "proactive_chat_interval", 8
         )
 
+        # 当前情绪状态（不再是"形态"，而是情绪）
+        self.current_emotion: str = "元气"
+
+        # 性能监控
+        perf_config = self._skill_config.get("performance", {})
+        self._perf_tracker = PerformanceTracker(
+            enabled=perf_config.get("performance_tracking", True)
+        )
+
         # 初始化子系统
-        self._form_manager = FormManager(self._config_path)
+        self._emotion_manager = EmotionManager(self._config_path)
         self._memory = EmotionMemory(
             max_entries=self._skill_config.get("memory_max_entries", 50),
             storage_path=os.path.join(
@@ -99,8 +178,7 @@ class YoimiyaSummerSoul(BaseSkill):
 
         logger.info(
             f"YoimiyaSummerSoul v{self.version} initialized. "
-            f"Default form: {self.current_form}, Language: {self.language}, "
-            f"Proactive chat: {self.proactive_chat_enabled}"
+            f"Language: {self.language}, Proactive chat: {self.proactive_chat_enabled}"
         )
 
     def _get_default_config_path(self) -> str:
@@ -117,6 +195,9 @@ class YoimiyaSummerSoul(BaseSkill):
             with open(self._config_path, "r", encoding="utf-8") as f:
                 config = json.load(f)
             self._skill_config = config.get("skill", {})
+            # 合并 performance 和 monitoring 配置
+            self._skill_config.update(config.get("performance", {}))
+            self._skill_config.update(config.get("monitoring", {}))
             logger.debug("Skill config loaded successfully")
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in config file: {e}")
@@ -126,18 +207,18 @@ class YoimiyaSummerSoul(BaseSkill):
     # 辅助方法
     # ============================================================
 
-    def _get_current_strategy(self) -> Optional[FormStrategy]:
-        """获取当前形态的策略"""
-        return self._form_manager.get_form(self.current_form)
-
     def _set_system_prompt(self, ctx: Any) -> None:
-        """设置系统提示词（包含记忆注入）"""
-        strategy = self._get_current_strategy()
-        if strategy is None:
-            logger.warning(f"Unknown form: {self.current_form}")
-            return
+        """设置系统提示词（包含情绪状态注入）"""
+        from .prompts import get_system_prompt, get_emotion_state_addition
 
-        prompt = strategy.get_system_prompt(self.language)
+        base_prompt = get_system_prompt(self.language)
+
+        # 注入情绪状态追加内容
+        emotion_addition = get_emotion_state_addition(self.current_emotion, self.language)
+        if emotion_addition:
+            prompt = f"{base_prompt}\n\n{emotion_addition}"
+        else:
+            prompt = base_prompt
 
         # 注入情感记忆
         memory_summary = self._memory.get_memory_summary()
@@ -151,16 +232,18 @@ class YoimiyaSummerSoul(BaseSkill):
         if not self.emotion_keywords_enabled:
             return None
 
-        strategy = self._get_current_strategy()
-        if strategy is None:
+        # 从配置文件加载情感关键词
+        try:
+            with open(self._config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            emotion_keywords = config.get("emotion_keywords", {})
+        except Exception:
             return None
 
-        # 检查形态专属关键词
-        for keyword in strategy.config.keywords:
+        # 检查关键词
+        for keyword, response in emotion_keywords.items():
             if keyword.lower() in message.lower():
-                response = strategy.get_emotion_response(keyword)
-                if response:
-                    return response
+                return response
 
         return None
 
@@ -170,12 +253,9 @@ class YoimiyaSummerSoul(BaseSkill):
             return None
         return self._event_manager.get_event_message(self.language)
 
-    def _suggest_form_switch(self, message: str) -> Optional[str]:
-        """基于对话内容智能推荐形态切换"""
-        suggested = self._form_manager.suggest_form(message)
-        if suggested and suggested != self.current_form:
-            return suggested
-        return None
+    def _detect_emotion(self, message: str) -> Optional[str]:
+        """检测情绪状态"""
+        return self._emotion_manager.detect_emotion(message)
 
     def _get_proactive_message(self) -> Optional[str]:
         """获取主动聊天消息"""
@@ -212,10 +292,10 @@ class YoimiyaSummerSoul(BaseSkill):
         """获取本地化文本"""
         texts = {
             "zh": {
-                "unknown_form": "欸？'{form}'是什么形态呀，我没听说过呢~\n请输入：切换形态 夏祭 / 琉金 / 幻梦",
-                "switch_hint": "欸？你想切换到什么形态呀？请输入：\n`切换形态 夏祭` / `切换形态 琉金` / `切换形态 幻梦`",
-                "current_form": "当前形态：{form}",
-                "stats_title": "📊 形态属性",
+                "unknown_emotion": "欸？'{emotion}'是什么情绪呀，我没听说过呢~\n当前情绪：{current}",
+                "emotion_hint": "欸？你想了解什么情绪呀？当前情绪：{current}",
+                "current_emotion": "当前情绪：{emotion}",
+                "stats_title": "📊 宵宫属性",
                 "memory_cleared": "*(歪头)* 嗯……之前的记忆？好像被一阵风吹走了呢！不过没关系，我们可以创造新的回忆！🎆",
                 "diary_not_ready": "*(翻着手账)* 唔……对话还不够多呢，再聊一会儿再写手账吧！",
                 "language_changed": "语言已切换为：{lang}",
@@ -224,27 +304,27 @@ class YoimiyaSummerSoul(BaseSkill):
                 "unknown_game": "不知道这个游戏呢……可用游戏：\n",
                 "proactive_on": "主动聊天已开启！我会时不时找你聊天哦~",
                 "proactive_off": "主动聊天已关闭。我会安静等你找我啦。",
+                "emotion_changed": "*(情绪变化)* {message}",
                 "help_text": (
-                    "**宵宫·夏日灵魂觉醒 v1.0** 🎆\n\n"
+                    "**宵宫·夏日灵魂觉醒 v1.1** 🎆\n\n"
                     "📋 指令列表：\n"
-                    "- `切换形态 <形态名>` - 手动切换形态\n"
-                    "- `形态属性` - 查看当前形态属性\n"
+                    "- `情绪` - 查看当前情绪状态\n"
                     "- `语言 <zh/en/ja>` - 切换语言\n"
                     "- `日记` - 查看对话总结\n"
                     "- `清空记忆` - 清空情感记忆\n"
                     "- `小游戏 <游戏名>` - 玩互动小游戏\n"
                     "- `主动聊天 <开/关>` - 开启/关闭主动聊天\n"
                     "- `帮助` - 显示此帮助信息\n\n"
-                    "🎭 形态：夏祭 / 琉金 / 幻梦\n"
-                    "💫 对话中有 {prob}% 概率自动变身\n"
+                    "🎭 情绪状态会根据对话内容自然流动\n"
+                    "💫 对话中有 {prob}% 概率情绪波动\n"
                     "💬 主动聊天：{proactive}"
                 ),
             },
             "en": {
-                "unknown_form": "Huh? I've never heard of the '{form}' form~\nPlease use: switch form Summer Festival / Amber Blaze / Stardust Dream",
-                "switch_hint": "Huh? Which form do you want to switch to? Please use:\n`switch form Summer Festival` / `switch form Amber Blaze` / `switch form Stardust Dream`",
-                "current_form": "Current form: {form}",
-                "stats_title": "📊 Form Stats",
+                "unknown_emotion": "Huh? I've never heard of the '{emotion}' emotion~\nCurrent emotion: {current}",
+                "emotion_hint": "Huh? What emotion do you want to know about? Current emotion: {current}",
+                "current_emotion": "Current emotion: {emotion}",
+                "stats_title": "📊 Yoimiya Stats",
                 "memory_cleared": "*(tilts head)* Hmm... previous memories? Seems like they were blown away by the wind! But it's okay, we can create new ones! 🎆",
                 "diary_not_ready": "*(flipping through diary)* Mmm... not enough conversations yet, let's chat a bit more before writing the diary!",
                 "language_changed": "Language changed to: {lang}",
@@ -253,27 +333,27 @@ class YoimiyaSummerSoul(BaseSkill):
                 "unknown_game": "I don't know that game... Available games:\n",
                 "proactive_on": "Proactive chat is on! I'll chat with you from time to time~",
                 "proactive_off": "Proactive chat is off. I'll wait quietly for you to find me.",
+                "emotion_changed": "*(emotional shift)* {message}",
                 "help_text": (
-                    "**Yoimiya: Summer Soul Awakening v1.0** 🎆\n\n"
+                    "**Yoimiya: Summer Soul Awakening v1.1** 🎆\n\n"
                     "📋 Command List:\n"
-                    "- `switch form <form>` - Manually switch forms\n"
-                    "- `form stats` - View current form stats\n"
+                    "- `emotion` - View current emotional state\n"
                     "- `language <zh/en/ja>` - Switch language\n"
                     "- `diary` - View conversation summary\n"
                     "- `clear memory` - Clear emotional memory\n"
                     "- `minigame <name>` - Play interactive minigames\n"
                     "- `proactive chat <on/off>` - Enable/disable proactive chat\n"
                     "- `help` - Show this help\n\n"
-                    "🎭 Forms: Summer Festival / Amber Blaze / Stardust Dream\n"
-                    "💫 {prob}% chance of auto transformation during conversation\n"
+                    "🎭 Emotional states flow naturally based on conversation\n"
+                    "💫 {prob}% chance of emotional fluctuation during conversation\n"
                     "💬 Proactive chat: {proactive}"
                 ),
             },
             "ja": {
-                "unknown_form": "え？「{form}」って何の形態？聞いたことないよ~\n入力してね：形態切替 夏祭り / 琉金 / 幻夢",
-                "switch_hint": "え？どの形態に切り替えたいの？入力してね：\n`形態切替 夏祭り` / `形態切替 琉金` / `形態切替 幻夢`",
-                "current_form": "現在の形態：{form}",
-                "stats_title": "📊 形態ステータス",
+                "unknown_emotion": "え？「{emotion}」って何の感情？聞いたことないよ~\n現在の感情：{current}",
+                "emotion_hint": "え？どの感情を知りたいの？現在の感情：{current}",
+                "current_emotion": "現在の感情：{emotion}",
+                "stats_title": "📊 宵宮ステータス",
                 "memory_cleared": "*(首をかしげる)* うーん……前の記憶？風に吹き飛ばされちゃったみたい！でも大丈夫、新しい思い出を作ろう！🎆",
                 "diary_not_ready": "*(手帳をめくる)* うーん……まだ会話が足りないね、もう少しおしゃべりしてから日記を書こう！",
                 "language_changed": "言語を変更しました：{lang}",
@@ -282,19 +362,19 @@ class YoimiyaSummerSoul(BaseSkill):
                 "unknown_game": "そのゲームは知らないな……利用可能なゲーム：\n",
                 "proactive_on": "主动チャットがオンになったよ！時々話しかけるね~",
                 "proactive_off": "主动チャットがオフになったよ。静かに待ってるね。",
+                "emotion_changed": "*(感情の変化)* {message}",
                 "help_text": (
-                    "**宵宮·夏の魂の覚醒 v1.0** 🎆\n\n"
+                    "**宵宮·夏の魂の覚醒 v1.1** 🎆\n\n"
                     "📋 コマンド一覧：\n"
-                    "- `形態切替 <形態名>` - 手動で形態を切り替え\n"
-                    "- `形態ステータス` - 現在の形態ステータスを確認\n"
+                    "- `感情` - 現在の感情状態を確認\n"
                     "- `言語 <zh/en/ja>` - 言語を切り替え\n"
                     "- `日記` - 会話のまとめを見る\n"
                     "- `記憶消去` - 感情記憶を消去\n"
                     "- `ミニゲーム <名前>` - インタラクティブなミニゲームを遊ぶ\n"
                     "- `主动チャット <オン/オフ>` - 主动チャットのオン/オフ\n"
                     "- `ヘルプ` - このヘルプを表示\n\n"
-                    "🎭 形態：夏祭り / 琉金 / 幻夢\n"
-                    "💫 会話中に {prob}% の確率で自動変身\n"
+                    "🎭 感情状態は会話の内容に応じて自然に流れる\n"
+                    "💫 会話中に {prob}% の確率で感情の起伏\n"
                     "💬 主动チャット：{proactive}"
                 ),
             },
@@ -309,110 +389,101 @@ class YoimiyaSummerSoul(BaseSkill):
 
     @on_message()
     async def handle_message(self, ctx: Any) -> None:
-        """处理普通消息：自动形态切换、情感关键词、季节事件、记忆记录、主动聊天"""
+        """处理普通消息：情绪检测、情感关键词、季节事件、记忆记录、主动聊天"""
+        with self._perf_tracker.track("handle_message"):
+            try:
+                message = getattr(ctx, "message", "")
+                user_id = getattr(ctx, "user_id", "anonymous")
+
+                # 检查季节事件（首次对话时）
+                if self._message_count == 0:
+                    event_msg = self._check_seasonal_event()
+                    if event_msg:
+                        await ctx.send(event_msg)
+
+                self._message_count += 1
+
+                # 检测情绪状态变化（基于内容）
+                detected = self._detect_emotion(message)
+                if detected and detected != self.current_emotion:
+                    old_emotion = self.current_emotion
+                    self.current_emotion = detected
+                    logger.info(f"Emotion shift: {old_emotion} -> {detected}")
+                    
+                    # 发送情绪变化提示（不喧宾夺主）
+                    emotion_messages = {
+                        "元气": {
+                            "zh": "*(眼睛亮了起来)* 嘿嘿，说到这个我就来劲了！",
+                            "en": "*(eyes light up)* Hehe, you got me excited talking about this!",
+                            "ja": "*(目が輝く)* えへへ、これの話をすると私も張り切っちゃう！",
+                        },
+                        "热血": {
+                            "zh": "*(握紧了拳头)* 嗯！这种时候就该拿出干劲来！",
+                            "en": "*(clenches fist)* Yeah! This is when we need to give it our all!",
+                            "ja": "*(拳を握る)* うん！こういう時は気合を入れないとね！",
+                        },
+                        "温柔": {
+                            "zh": "*(声音变得轻柔)* 啊……这个话题，让我有点感触呢。",
+                            "en": "*(voice becomes gentle)* Ah... this topic, it touches me a bit.",
+                            "ja": "*(声が優しくなる)* ああ……この話題、少し感傷的になっちゃうな。",
+                        },
+                    }
+                    msg = emotion_messages.get(detected, {}).get(self.language, "")
+                    if msg:
+                        await ctx.send(msg)
+
+                # 自动随机情绪波动
+                elif random.random() < self.auto_shift_probability:
+                    states = self._emotion_manager.get_all_states()
+                    old_emotion = self.current_emotion
+                    new_emotion = random.choice([s for s in states if s != old_emotion])
+                    self.current_emotion = new_emotion
+                    logger.info(f"Auto emotion shift: {old_emotion} -> {new_emotion}")
+
+                # 检查情感关键词反射
+                emotion_response = self._check_emotion_keywords(message)
+                if emotion_response:
+                    await ctx.send(emotion_response)
+
+                # 主动聊天触发
+                if (
+                    self.proactive_chat_enabled
+                    and self._message_count > 0
+                    and self._message_count % self.proactive_chat_interval == 0
+                ):
+                    proactive_msg = self._get_proactive_message()
+                    if proactive_msg:
+                        await ctx.send(proactive_msg)
+
+                # 设置系统提示词
+                self._set_system_prompt(ctx)
+
+                # 记录记忆（在响应后由调用方补充）
+                ctx._yoimiya_emotion = self.current_emotion
+                ctx._yoimiya_memory = self._memory
+
+                # 检查是否需要生成日记
+                if self._message_count > 0 and self._message_count % self._diary_interval == 0:
+                    diary = self._memory.generate_diary()
+                    await ctx.send(f"\n\n*{diary}*")
+
+            except Exception as e:
+                logger.error(f"Error in handle_message: {e}", exc_info=True)
+                await ctx.send("*(揉了揉眼睛)* 哎呀……刚才好像走神了，能再说一遍吗？")
+
+    @on_command("情绪")
+    async def cmd_emotion(self, ctx: Any) -> None:
+        """查看当前情绪状态"""
         try:
-            message = getattr(ctx, "message", "")
-            user_id = getattr(ctx, "user_id", "anonymous")
-
-            # 检查季节事件（首次对话时）
-            if self._message_count == 0:
-                event_msg = self._check_seasonal_event()
-                if event_msg:
-                    await ctx.send(event_msg)
-
-            self._message_count += 1
-
-            # 动态形态切换（基于内容）
-            suggested = self._suggest_form_switch(message)
-            if suggested and suggested != self.current_form:
-                old_form = self.current_form
-                self.current_form = suggested
-                strategy = self._get_current_strategy()
-                if strategy:
-                    logger.info(f"Dynamic shift: {old_form} -> {suggested}")
-                    await ctx.send(
-                        f"*(感受到你的话语中蕴含着{suggested}的气息……)*\n"
-                        f"{strategy.get_shift_message()}"
-                    )
-
-            # 自动随机形态切换
-            elif random.random() < self.auto_shift_probability:
-                forms = self._form_manager.get_all_forms()
-                old_form = self.current_form
-                new_form = random.choice([f for f in forms if f != old_form])
-                self.current_form = new_form
-                strategy = self._get_current_strategy()
-                if strategy:
-                    logger.info(f"Auto shift: {old_form} -> {new_form}")
-                    await ctx.send(strategy.get_shift_message())
-
-            # 检查情感关键词反射
-            emotion_response = self._check_emotion_keywords(message)
-            if emotion_response:
-                await ctx.send(emotion_response)
-
-            # 主动聊天触发
-            if (
-                self.proactive_chat_enabled
-                and self._message_count > 0
-                and self._message_count % self.proactive_chat_interval == 0
-            ):
-                proactive_msg = self._get_proactive_message()
-                if proactive_msg:
-                    await ctx.send(proactive_msg)
-
-            # 设置系统提示词
-            self._set_system_prompt(ctx)
-
-            # 记录记忆（在响应后由调用方补充）
-            ctx._yoimiya_form = self.current_form
-            ctx._yoimiya_memory = self._memory
-
-            # 检查是否需要生成日记
-            if self._message_count > 0 and self._message_count % self._diary_interval == 0:
-                diary = self._memory.generate_diary()
-                await ctx.send(f"\n\n*{diary}*")
-
-        except Exception as e:
-            logger.error(f"Error in handle_message: {e}", exc_info=True)
-            await ctx.send("*(揉了揉眼睛)* 哎呀……刚才好像走神了，能再说一遍吗？")
-
-    @on_command("切换形态")
-    async def cmd_switch_form(self, ctx: Any) -> None:
-        """手动切换形态"""
-        try:
-            args = getattr(ctx, "get_args", lambda: "")()
-            args = args.strip() if isinstance(args, str) else ""
-
-            if not args:
-                await ctx.send(self._get_localized_text("switch_hint"))
-                return
-
-            if args in self._form_manager.get_all_forms():
-                old_form = self.current_form
-                self.current_form = args
-                strategy = self._get_current_strategy()
-                if strategy:
-                    logger.info(f"Manual switch: {old_form} -> {args}")
-                    await ctx.send(strategy.get_switch_reply())
-                    ctx.set_system_prompt(strategy.get_system_prompt(self.language))
-            else:
-                await ctx.send(self._get_localized_text("unknown_form", form=args))
-
-        except Exception as e:
-            logger.error(f"Error in cmd_switch_form: {e}", exc_info=True)
-            await ctx.send("*(困惑地挠头)* 切换的时候出了点小问题……再试一次？")
-
-    @on_command("形态属性")
-    async def cmd_form_stats(self, ctx: Any) -> None:
-        """查看当前形态属性"""
-        try:
-            stats_display = self._form_manager.get_form_stats_display(
-                self.current_form, self.language
+            stats_display = self._emotion_manager.get_state_stats_display(
+                self.current_emotion, self.language
             )
-            await ctx.send(f"{self._get_localized_text('stats_title')}\n{stats_display}")
+            await ctx.send(
+                f"{self._get_localized_text('current_emotion', emotion=self.current_emotion)}\n"
+                f"{stats_display}"
+            )
         except Exception as e:
-            logger.error(f"Error in cmd_form_stats: {e}", exc_info=True)
+            logger.error(f"Error in cmd_emotion: {e}", exc_info=True)
 
     @on_command("语言")
     async def cmd_language(self, ctx: Any) -> None:
@@ -509,6 +580,28 @@ class YoimiyaSummerSoul(BaseSkill):
         except Exception as e:
             logger.error(f"Error in cmd_help: {e}", exc_info=True)
 
+    @on_command("性能")
+    async def cmd_performance(self, ctx: Any) -> None:
+        """查看性能统计"""
+        try:
+            stats = self._perf_tracker.get_all_stats()
+            if not stats:
+                await ctx.send("*(歪头)* 还没有性能数据呢，再聊一会儿吧！")
+                return
+            
+            lines = ["**性能统计** 📊"]
+            for name, data in stats.items():
+                lines.append(
+                    f"\n{name}:\n"
+                    f"  调用次数: {data['count']}\n"
+                    f"  平均耗时: {data['avg']:.3f}s\n"
+                    f"  最小耗时: {data['min']:.3f}s\n"
+                    f"  最大耗时: {data['max']:.3f}s"
+                )
+            await ctx.send("\n".join(lines))
+        except Exception as e:
+            logger.error(f"Error in cmd_performance: {e}", exc_info=True)
+
     # ============================================================
     # 公共 API
     # ============================================================
@@ -525,7 +618,7 @@ class YoimiyaSummerSoul(BaseSkill):
             self._memory.add(
                 user_message=user_message,
                 bot_response=bot_response,
-                form=self.current_form,
+                form=self.current_emotion,  # 记录情绪状态而非形态
                 emotion_score=emotion_score,
                 keywords=keywords,
             )
@@ -536,14 +629,17 @@ class YoimiyaSummerSoul(BaseSkill):
         """获取记忆摘要"""
         return self._memory.get_memory_summary()
 
-    def get_current_form_info(self) -> Dict[str, Any]:
-        """获取当前形态信息"""
-        strategy = self._get_current_strategy()
-        config = self._form_manager.get_config(self.current_form)
+    def get_current_state_info(self) -> Dict[str, Any]:
+        """获取当前状态信息"""
+        state = self._emotion_manager.get_state(self.current_emotion)
         return {
-            "form": self.current_form,
+            "emotion": self.current_emotion,
             "language": self.language,
-            "stats": config.stats.to_dict() if config else {},
-            "keywords": config.keywords if config else [],
+            "emotion_tags": state.emotion_tags if state else [],
+            "keywords": state.keywords if state else [],
             "proactive_chat": self.proactive_chat_enabled,
         }
+
+    def get_performance_stats(self) -> Dict[str, Dict[str, float]]:
+        """获取性能统计"""
+        return self._perf_tracker.get_all_stats()

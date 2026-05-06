@@ -1,4 +1,4 @@
-"""YoimiyaSummerSoul Skill 完整测试套件 v1.0"""
+"""YoimiyaSummerSoul Skill 完整测试套件 v1.1"""
 
 import json
 import os
@@ -34,40 +34,45 @@ mock_sdk.on_message = mock_on_message
 sys.modules['openclaw'] = type(sys)('openclaw')
 sys.modules['openclaw.sdk'] = mock_sdk
 
-from yoimiya_skill.yoimiya_skill import YoimiyaSummerSoul
+from yoimiya_skill.yoimiya_skill import YoimiyaSummerSoul, PerformanceTracker
 from yoimiya_skill.memory import EmotionMemory, MemoryEntry
-from yoimiya_skill.form_manager import FormManager, FormStats, FormConfig
+from yoimiya_skill.emotion_manager import EmotionManager, EmotionState
 from yoimiya_skill.events import SeasonalEventManager, MinigameManager
-from yoimiya_skill.prompts import get_form_prompt, get_supported_languages
+from yoimiya_skill.prompts import get_system_prompt, get_supported_languages, get_all_emotion_states
 
 
 class TestPrompts(unittest.TestCase):
     """测试提示词系统"""
 
-    def test_get_form_prompt_zh(self):
-        prompt = get_form_prompt("夏祭", "zh")
+    def test_get_system_prompt_zh(self):
+        prompt = get_system_prompt("zh")
         self.assertIn("Identity", prompt)
         self.assertIn("宵宫", prompt)
 
-    def test_get_form_prompt_en(self):
-        prompt = get_form_prompt("夏祭", "en")
+    def test_get_system_prompt_en(self):
+        prompt = get_system_prompt("en")
         self.assertIn("Identity", prompt)
         self.assertIn("Yoimiya", prompt)
 
-    def test_get_form_prompt_ja(self):
-        prompt = get_form_prompt("夏祭", "ja")
+    def test_get_system_prompt_ja(self):
+        prompt = get_system_prompt("ja")
         self.assertIn("Identity", prompt)
         self.assertIn("宵宮", prompt)
 
-    def test_get_form_prompt_all_forms(self):
-        for form in ["夏祭", "琉金", "幻梦"]:
-            for lang in ["zh", "en", "ja"]:
-                prompt = get_form_prompt(form, lang)
-                self.assertTrue(len(prompt) > 0, f"{form}/{lang} prompt is empty")
+    def test_get_system_prompt_all_languages(self):
+        for lang in ["zh", "en", "ja"]:
+            prompt = get_system_prompt(lang)
+            self.assertTrue(len(prompt) > 0, f"{lang} prompt is empty")
 
     def test_supported_languages(self):
         langs = get_supported_languages()
         self.assertEqual(langs, ["zh", "en", "ja"])
+
+    def test_emotion_states(self):
+        states = get_all_emotion_states()
+        self.assertIn("元气", states)
+        self.assertIn("热血", states)
+        self.assertIn("温柔", states)
 
 
 class TestMemory(unittest.TestCase):
@@ -84,46 +89,46 @@ class TestMemory(unittest.TestCase):
         os.rmdir(self.temp_dir)
 
     def test_add_memory(self):
-        self.memory.add("你好", "你好呀！", "夏祭", 0.5, ["问候"])
+        self.memory.add("你好", "你好呀！", "元气", 0.5, ["问候"])
         self.assertEqual(self.memory.memory_count, 1)
 
     def test_get_recent(self):
         for i in range(5):
-            self.memory.add(f"msg{i}", f"resp{i}", "夏祭")
+            self.memory.add(f"msg{i}", f"resp{i}", "元气")
         recent = self.memory.get_recent(3)
         self.assertEqual(len(recent), 3)
         self.assertEqual(recent[-1].user_message, "msg4")
 
     def test_max_entries_limit(self):
         for i in range(15):
-            self.memory.add(f"msg{i}", f"resp{i}", "夏祭")
+            self.memory.add(f"msg{i}", f"resp{i}", "元气")
         self.assertEqual(self.memory.memory_count, 10)
 
     def test_get_relevant_memories(self):
-        self.memory.add("烟花", "砰——啪！", "夏祭", keywords=["烟花"])
-        self.memory.add("战斗", "看箭！", "琉金", keywords=["战斗"])
+        self.memory.add("烟花", "砰——啪！", "元气", keywords=["烟花"])
+        self.memory.add("战斗", "看箭！", "热血", keywords=["战斗"])
         relevant = self.memory.get_relevant_memories("烟花", top_k=1)
         self.assertEqual(len(relevant), 1)
         self.assertEqual(relevant[0].user_message, "烟花")
 
     def test_memory_summary(self):
-        self.memory.add("你好", "你好呀！", "夏祭")
+        self.memory.add("你好", "你好呀！", "元气")
         summary = self.memory.get_memory_summary()
         self.assertIn("Recent Memories", summary)
 
     def test_emotion_trend(self):
-        self.memory.add("a", "b", "夏祭", 0.5)
-        self.memory.add("c", "d", "夏祭", 0.3)
+        self.memory.add("a", "b", "元气", 0.5)
+        self.memory.add("c", "d", "元气", 0.3)
         trend = self.memory.get_emotion_trend()
         self.assertAlmostEqual(trend, 0.4, places=1)
 
     def test_form_frequency(self):
-        self.memory.add("a", "b", "夏祭")
-        self.memory.add("c", "d", "琉金")
-        self.memory.add("e", "f", "夏祭")
+        self.memory.add("a", "b", "元气")
+        self.memory.add("c", "d", "热血")
+        self.memory.add("e", "f", "元气")
         freq = self.memory.get_form_frequency()
-        self.assertEqual(freq["夏祭"], 2)
-        self.assertEqual(freq["琉金"], 1)
+        self.assertEqual(freq["元气"], 2)
+        self.assertEqual(freq["热血"], 1)
 
     def test_preferences(self):
         self.memory.set_preference("language", "en")
@@ -132,95 +137,71 @@ class TestMemory(unittest.TestCase):
 
     def test_generate_diary(self):
         for i in range(5):
-            self.memory.add(f"msg{i}", f"resp{i}", "夏祭", 0.2)
+            self.memory.add(f"msg{i}", f"resp{i}", "元气", 0.2)
         diary = self.memory.generate_diary()
         self.assertIn("手账", diary)
         self.assertIn("msg", diary)
 
     def test_clear(self):
-        self.memory.add("a", "b", "夏祭")
+        self.memory.add("a", "b", "元气")
         self.memory.clear()
         self.assertEqual(self.memory.memory_count, 0)
 
     def test_persistence(self):
-        self.memory.add("test", "response", "夏祭")
+        self.memory.add("test", "response", "元气")
         # 创建新实例，应该能加载之前的记忆
         memory2 = EmotionMemory(max_entries=10, storage_path=self.memory_path)
         self.assertEqual(memory2.memory_count, 1)
 
 
-class TestFormManager(unittest.TestCase):
-    """测试形态管理器"""
+class TestEmotionManager(unittest.TestCase):
+    """测试情绪管理器"""
 
     def setUp(self):
-        self.manager = FormManager()
+        self.manager = EmotionManager()
 
-    def test_get_all_forms(self):
-        forms = self.manager.get_all_forms()
-        self.assertIn("夏祭", forms)
-        self.assertIn("琉金", forms)
-        self.assertIn("幻梦", forms)
+    def test_get_all_states(self):
+        states = self.manager.get_all_states()
+        self.assertIn("元气", states)
+        self.assertIn("热血", states)
+        self.assertIn("温柔", states)
 
-    def test_get_form(self):
-        strategy = self.manager.get_form("夏祭")
-        self.assertIsNotNone(strategy)
-        self.assertEqual(strategy.form_name, "夏祭")
+    def test_get_state(self):
+        state = self.manager.get_state("元气")
+        self.assertIsNotNone(state)
+        self.assertEqual(state.name, "元气")
+        self.assertIsInstance(state.keywords, list)
 
-    def test_get_config(self):
-        config = self.manager.get_config("夏祭")
-        self.assertIsNotNone(config)
-        self.assertEqual(config.name, "夏祭")
-        self.assertIsInstance(config.stats, FormStats)
+    def test_detect_emotion(self):
+        # 包含元气关键词
+        detected = self.manager.detect_emotion("烟花 祭典 孩子")
+        self.assertEqual(detected, "元气")
 
-    def test_get_random_form(self):
-        form = self.manager.get_random_form()
-        self.assertIn(form, self.manager.get_all_forms())
+        # 包含热血关键词
+        detected = self.manager.detect_emotion("战斗 弓箭 勇气")
+        self.assertEqual(detected, "热血")
 
-    def test_get_random_form_exclude(self):
-        form = self.manager.get_random_form(exclude="夏祭")
-        self.assertNotEqual(form, "夏祭")
-
-    def test_suggest_form(self):
-        # 包含夏祭关键词
-        suggested = self.manager.suggest_form("烟花 祭典 孩子")
-        self.assertEqual(suggested, "夏祭")
-
-        # 包含琉金关键词
-        suggested = self.manager.suggest_form("战斗 弓箭 勇气")
-        self.assertEqual(suggested, "琉金")
+        # 包含温柔关键词
+        detected = self.manager.detect_emotion("回忆 星空 梦想")
+        self.assertEqual(detected, "温柔")
 
         # 无关键词
-        suggested = self.manager.suggest_form("abcdefg")
-        self.assertIsNone(suggested)
+        detected = self.manager.detect_emotion("abcdefg")
+        self.assertIsNone(detected)
 
-    def test_get_form_stats_display(self):
-        display = self.manager.get_form_stats_display("夏祭", "zh")
-        self.assertIn("防御", display)
-        self.assertIn("夏祭", display)
+    def test_get_system_prompt_with_emotion(self):
+        base = "Base prompt"
+        result = self.manager.get_system_prompt_with_emotion(base, "元气", "zh")
+        self.assertIn("Base prompt", result)
+        self.assertIn("元气", result)
 
-    def test_form_prompts(self):
-        for form in self.manager.get_all_forms():
-            strategy = self.manager.get_form(form)
-            prompt = strategy.get_system_prompt("zh")
-            self.assertTrue(len(prompt) > 0)
+    def test_get_random_state(self):
+        state = self.manager.get_random_state()
+        self.assertIn(state, self.manager.get_all_states())
 
-    def test_emotion_keywords(self):
-        strategy = self.manager.get_form("夏祭")
-        response = strategy.get_emotion_response("烟花")
-        self.assertIsNotNone(response)
-
-    def test_shift_messages(self):
-        for form in self.manager.get_all_forms():
-            strategy = self.manager.get_form(form)
-            msg = strategy.get_shift_message()
-            self.assertTrue(len(msg) > 0)
-            self.assertIn("*", msg)  # 动作描写标记
-
-    def test_switch_replies(self):
-        for form in self.manager.get_all_forms():
-            strategy = self.manager.get_form(form)
-            reply = strategy.get_switch_reply()
-            self.assertTrue(len(reply) > 0)
+    def test_get_random_state_exclude(self):
+        state = self.manager.get_random_state(exclude="元气")
+        self.assertNotEqual(state, "元气")
 
 
 class TestEvents(unittest.TestCase):
@@ -267,6 +248,32 @@ class TestEvents(unittest.TestCase):
         self.assertIn("回忆", games)
 
 
+class TestPerformanceTracker(unittest.TestCase):
+    """测试性能追踪器"""
+
+    def test_track_enabled(self):
+        tracker = PerformanceTracker(enabled=True)
+        with tracker.track("test_op"):
+            pass
+        stats = tracker.get_stats("test_op")
+        self.assertEqual(stats["count"], 1)
+
+    def test_track_disabled(self):
+        tracker = PerformanceTracker(enabled=False)
+        with tracker.track("test_op"):
+            pass
+        stats = tracker.get_stats("test_op")
+        self.assertEqual(stats, {})
+
+    def test_multiple_tracks(self):
+        tracker = PerformanceTracker(enabled=True)
+        for _ in range(5):
+            with tracker.track("test_op"):
+                pass
+        stats = tracker.get_stats("test_op")
+        self.assertEqual(stats["count"], 5)
+
+
 class TestYoimiyaSummerSoul(unittest.TestCase):
     """测试主 Skill 类"""
 
@@ -275,27 +282,26 @@ class TestYoimiyaSummerSoul(unittest.TestCase):
 
     def test_initialization(self):
         self.assertEqual(self.skill.name, "Yoimiya_Summer_Soul_Skill")
-        self.assertEqual(self.skill.current_form, "夏祭")
+        self.assertEqual(self.skill.current_emotion, "元气")
         self.assertEqual(self.skill.language, "zh")
-        self.assertEqual(self.skill.version, "1.0.0")
+        self.assertEqual(self.skill.version, "1.1.0")
 
     def test_proactive_chat_default(self):
         self.assertTrue(self.skill.proactive_chat_enabled)
 
-    def test_default_form(self):
-        self.assertIn(self.skill.current_form, self.skill._form_manager.get_all_forms())
+    def test_default_emotion(self):
+        self.assertIn(self.skill.current_emotion, self.skill._emotion_manager.get_all_states())
 
-    def test_form_switch(self):
-        # 模拟切换
-        old_form = self.skill.current_form
-        self.skill.current_form = "琉金"
-        self.assertEqual(self.skill.current_form, "琉金")
-        self.assertNotEqual(old_form, self.skill.current_form)
+    def test_emotion_switch(self):
+        # 模拟切换情绪
+        old_emotion = self.skill.current_emotion
+        self.skill.current_emotion = "热血"
+        self.assertEqual(self.skill.current_emotion, "热血")
+        self.assertNotEqual(old_emotion, self.skill.current_emotion)
 
-    def test_get_current_strategy(self):
-        strategy = self.skill._get_current_strategy()
-        self.assertIsNotNone(strategy)
-        self.assertEqual(strategy.form_name, "夏祭")
+    def test_detect_emotion(self):
+        detected = self.skill._detect_emotion("我想看烟花")
+        self.assertEqual(detected, "元气")
 
     def test_language_switch(self):
         self.skill.language = "en"
@@ -304,13 +310,13 @@ class TestYoimiyaSummerSoul(unittest.TestCase):
         self.assertEqual(self.skill.language, "ja")
 
     def test_localized_text(self):
-        text = self.skill._get_localized_text("current_form", form="夏祭")
-        self.assertIn("夏祭", text)
+        text = self.skill._get_localized_text("current_emotion", emotion="元气")
+        self.assertIn("元气", text)
 
     def test_localized_text_en(self):
         self.skill.language = "en"
-        text = self.skill._get_localized_text("current_form", form="Summer Festival")
-        self.assertIn("Summer Festival", text)
+        text = self.skill._get_localized_text("current_emotion", emotion="Energetic")
+        self.assertIn("Energetic", text)
 
     def test_record_interaction(self):
         # 使用独立的临时内存路径
@@ -326,10 +332,10 @@ class TestYoimiyaSummerSoul(unittest.TestCase):
         summary = self.skill.get_memory_summary()
         self.assertIn("Recent Memories", summary)
 
-    def test_get_current_form_info(self):
-        info = self.skill.get_current_form_info()
-        self.assertEqual(info["form"], "夏祭")
-        self.assertIn("stats", info)
+    def test_get_current_state_info(self):
+        info = self.skill.get_current_state_info()
+        self.assertEqual(info["emotion"], "元气")
+        self.assertIn("emotion_tags", info)
         self.assertIn("keywords", info)
         self.assertIn("proactive_chat", info)
 
@@ -342,44 +348,17 @@ class TestYoimiyaSummerSoul(unittest.TestCase):
         response = self.skill._check_emotion_keywords("xyzabc")
         self.assertIsNone(response)
 
-    def test_suggest_form_switch(self):
-        suggested = self.skill._suggest_form_switch("战斗 弓箭")
-        self.assertEqual(suggested, "琉金")
-
     def test_config_loading(self):
         self.assertTrue(hasattr(self.skill, "_skill_config"))
         self.assertIn("auto_shift_probability", self.skill._skill_config)
 
-    def test_form_stats(self):
-        config = self.skill._form_manager.get_config("夏祭")
-        self.assertIsNotNone(config)
-        self.assertGreater(config.stats.defense, 0)
-        self.assertGreater(config.stats.speed, 0)
+    def test_performance_tracker(self):
+        self.assertTrue(self.skill._perf_tracker.enabled)
 
     def test_proactive_message(self):
         msg = self.skill._get_proactive_message()
         self.assertIsNotNone(msg)
         self.assertTrue(len(msg) > 0)
-
-
-class TestFormStats(unittest.TestCase):
-    """测试形态属性"""
-
-    def test_form_stats_creation(self):
-        stats = FormStats(defense=50, hp=80, speed=85, attack=70, crit_rate=20)
-        self.assertEqual(stats.defense, 50)
-        self.assertEqual(stats.hp, 80)
-
-    def test_form_stats_to_dict(self):
-        stats = FormStats(defense=50, hp=80, speed=85, attack=70, crit_rate=20)
-        d = stats.to_dict()
-        self.assertEqual(d["defense"], 50)
-        self.assertEqual(d["hp"], 80)
-
-    def test_form_stats_from_dict(self):
-        d = {"defense": 50, "hp": 80, "speed": 85, "attack": 70, "crit_rate": 20}
-        stats = FormStats.from_dict(d)
-        self.assertEqual(stats.defense, 50)
 
 
 class TestIntegration(unittest.TestCase):
@@ -397,20 +376,20 @@ class TestIntegration(unittest.TestCase):
         self.skill._memory = EmotionMemory(max_entries=50, storage_path=memory_path)
         
         # 1. 初始状态
-        self.assertEqual(self.skill.current_form, "夏祭")
+        self.assertEqual(self.skill.current_emotion, "元气")
 
         # 2. 记录对话
         self.skill.record_interaction("你好宵宫", "你好呀旅行者！", 0.8)
         self.assertEqual(self.skill._memory.memory_count, 1)
 
-        # 3. 切换形态
-        self.skill.current_form = "琉金"
+        # 3. 切换情绪
+        self.skill.current_emotion = "热血"
         self.skill.record_interaction("教我射箭", "好！看好了！", 0.6)
 
         # 4. 检查记忆
         freq = self.skill._memory.get_form_frequency()
-        self.assertEqual(freq["夏祭"], 1)
-        self.assertEqual(freq["琉金"], 1)
+        self.assertEqual(freq["元气"], 1)
+        self.assertEqual(freq["热血"], 1)
 
         # 5. 生成日记
         diary = self.skill._memory.generate_diary()
@@ -420,7 +399,7 @@ class TestIntegration(unittest.TestCase):
         """测试多语言支持"""
         for lang in ["zh", "en", "ja"]:
             self.skill.language = lang
-            prompt = self.skill._get_current_strategy().get_system_prompt(lang)
+            prompt = get_system_prompt(lang)
             self.assertTrue(len(prompt) > 0, f"Prompt for {lang} is empty")
 
     def test_memory_persistence(self):
@@ -445,6 +424,20 @@ class TestIntegration(unittest.TestCase):
         self.assertFalse(self.skill.proactive_chat_enabled)
         msg = self.skill._get_proactive_message()
         self.assertIsNone(msg)
+
+    def test_emotion_detection_flow(self):
+        """测试情绪检测流程"""
+        # 元气话题
+        emotion = self.skill._detect_emotion("今天祭典好热闹")
+        self.assertEqual(emotion, "元气")
+
+        # 热血话题
+        emotion = self.skill._detect_emotion("我们去战斗吧")
+        self.assertEqual(emotion, "热血")
+
+        # 温柔话题
+        emotion = self.skill._detect_emotion("你看那片星空")
+        self.assertEqual(emotion, "温柔")
 
 
 if __name__ == "__main__":
