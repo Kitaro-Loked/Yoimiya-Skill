@@ -2,7 +2,7 @@
   "skill": {
     "name": "Yoimiya_Summer_Soul_Skill",
     "description": "宵宫·夏日灵魂觉醒 - 统一角色情绪状态系统",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "default_language": "zh",
     "auto_shift_probability": 0.15,
     "memory_max_entries": 50,
@@ -10,13 +10,17 @@
     "emotion_keywords_enabled": true,
     "seasonal_events_enabled": true,
     "proactive_chat_enabled": true,
-    "proactive_chat_interval": 8
+    "proactive_chat_interval": 8,
+    "memory_auto_cleanup": true,
+    "memory_cleanup_interval": 86400,
+    "memory_max_age_days": 7
   },
   "performance": {
     "prompt_cache_ttl": 3600,
     "memory_cleanup_interval": 86400,
     "config_reload_check_interval": 5,
-    "max_concurrent_users": 10
+    "max_concurrent_users": 10,
+    "slow_threshold": 1.0
   },
   "monitoring": {
     "log_level": "INFO",

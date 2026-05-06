@@ -1,11 +1,12 @@
-"""YoimiyaSummerSoul Skill 完整测试套件 v1.1"""
+"""YoimiyaSummerSoul Skill 完整测试套件 v1.2"""
 
 import json
 import os
 import sys
 import tempfile
+import time
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 # 添加父目录到路径
@@ -34,11 +35,138 @@ mock_sdk.on_message = mock_on_message
 sys.modules['openclaw'] = type(sys)('openclaw')
 sys.modules['openclaw.sdk'] = mock_sdk
 
-from yoimiya_skill.yoimiya_skill import YoimiyaSummerSoul, PerformanceTracker
+from yoimiya_skill.yoimiya_skill import YoimiyaSummerSoul, PerformanceTracker, setup_logging
 from yoimiya_skill.memory import EmotionMemory, MemoryEntry
 from yoimiya_skill.emotion_manager import EmotionManager, EmotionState
 from yoimiya_skill.events import SeasonalEventManager, MinigameManager
 from yoimiya_skill.prompts import get_system_prompt, get_supported_languages, get_all_emotion_states
+from yoimiya_skill.localization import get_localized_text, get_emotion_shift_message, get_proactive_messages
+from yoimiya_skill.config_manager import ConfigManager
+from yoimiya_skill.exceptions import ConfigError, MemoryError
+
+
+class TestConfigManager(unittest.TestCase):
+    """测试配置管理器"""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.config_path = os.path.join(self.temp_dir, "config.json")
+        config = {
+            "skill": {"name": "TestSkill", "version": "1.0.0"},
+            "performance": {"prompt_cache_ttl": 1800},
+            "monitoring": {"log_level": "DEBUG"},
+            "emotion_keywords": {"烟花": "test response"},
+        }
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f)
+        self.manager = ConfigManager(config_path=self.config_path, ttl=1)
+
+    def tearDown(self):
+        if os.path.exists(self.config_path):
+            os.remove(self.config_path)
+        os.rmdir(self.temp_dir)
+
+    def test_get_config(self):
+        config = self.manager.get_config()
+        self.assertIn("skill", config)
+        self.assertEqual(config["skill"]["name"], "TestSkill")
+
+    def test_get_nested(self):
+        name = self.manager.get("skill.name")
+        self.assertEqual(name, "TestSkill")
+
+    def test_get_default(self):
+        value = self.manager.get("nonexistent.key", "default")
+        self.assertEqual(value, "default")
+
+    def test_cache(self):
+        # 第一次加载
+        config1 = self.manager.get_config()
+        # 第二次应该从缓存读取
+        config2 = self.manager.get_config()
+        self.assertEqual(config1, config2)
+
+    def test_cache_ttl_expiry(self):
+        # 获取配置
+        self.manager.get_config()
+        # 修改文件
+        time.sleep(0.1)
+        config = {
+            "skill": {"name": "UpdatedSkill", "version": "2.0.0"},
+            "performance": {},
+            "monitoring": {},
+        }
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f)
+        # 等待缓存过期
+        time.sleep(1.1)
+        new_config = self.manager.get_config()
+        self.assertEqual(new_config["skill"]["name"], "UpdatedSkill")
+
+    def test_force_reload(self):
+        config1 = self.manager.get_config()
+        # 修改文件
+        config = {
+            "skill": {"name": "ForceReloaded", "version": "3.0.0"},
+            "performance": {},
+            "monitoring": {},
+        }
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f)
+        # 强制重载
+        config2 = self.manager.get_config(force_reload=True)
+        self.assertEqual(config2["skill"]["name"], "ForceReloaded")
+
+    def test_get_skill_config(self):
+        skill_config = self.manager.get_skill_config()
+        self.assertEqual(skill_config["name"], "TestSkill")
+        self.assertEqual(skill_config["prompt_cache_ttl"], 1800)
+        self.assertEqual(skill_config["log_level"], "DEBUG")
+
+    def test_get_emotion_keywords(self):
+        keywords = self.manager.get_emotion_keywords()
+        self.assertIn("烟花", keywords)
+
+    def test_file_not_found(self):
+        bad_manager = ConfigManager(config_path="/nonexistent/config.json")
+        with self.assertRaises(FileNotFoundError):
+            bad_manager.get_config()
+
+
+class TestLocalization(unittest.TestCase):
+    """测试本地化模块"""
+
+    def test_get_localized_text_zh(self):
+        text = get_localized_text("current_emotion", "zh", emotion="元气")
+        self.assertIn("元气", text)
+
+    def test_get_localized_text_en(self):
+        text = get_localized_text("current_emotion", "en", emotion="Energetic")
+        self.assertIn("Energetic", text)
+
+    def test_get_localized_text_ja(self):
+        text = get_localized_text("current_emotion", "ja", emotion="元気")
+        self.assertIn("元気", text)
+
+    def test_get_localized_text_unknown_key(self):
+        text = get_localized_text("unknown_key", "zh")
+        self.assertEqual(text, "unknown_key")
+
+    def test_get_emotion_shift_message(self):
+        msg = get_emotion_shift_message("元气", "zh")
+        self.assertTrue(len(msg) > 0)
+
+    def test_get_emotion_shift_message_unknown(self):
+        msg = get_emotion_shift_message("unknown", "zh")
+        self.assertEqual(msg, "")
+
+    def test_get_proactive_messages(self):
+        msgs = get_proactive_messages("zh")
+        self.assertTrue(len(msgs) > 0)
+
+    def test_get_proactive_messages_default(self):
+        msgs = get_proactive_messages("unknown_lang")
+        self.assertTrue(len(msgs) > 0)
 
 
 class TestPrompts(unittest.TestCase):
@@ -152,6 +280,62 @@ class TestMemory(unittest.TestCase):
         # 创建新实例，应该能加载之前的记忆
         memory2 = EmotionMemory(max_entries=10, storage_path=self.memory_path)
         self.assertEqual(memory2.memory_count, 1)
+
+    def test_auto_cleanup_by_age(self):
+        """测试按年龄自动清理"""
+        # 创建一条旧记忆
+        old_entry = MemoryEntry(
+            timestamp=(datetime.now() - timedelta(days=10)).isoformat(),
+            user_message="old",
+            bot_response="old_resp",
+            form="元气",
+        )
+        self.memory._memories.append(old_entry)
+        self.memory.save()
+
+        # 创建新实例触发清理
+        memory2 = EmotionMemory(
+            max_entries=10,
+            storage_path=self.memory_path,
+            auto_cleanup=True,
+            cleanup_interval=0,  # 立即清理
+            max_age_days=7,
+        )
+        # 旧记忆应该被清理
+        self.assertEqual(memory2.memory_count, 0)
+
+    def test_manual_cleanup(self):
+        """测试手动清理"""
+        old_entry = MemoryEntry(
+            timestamp=(datetime.now() - timedelta(days=10)).isoformat(),
+            user_message="old",
+            bot_response="old_resp",
+            form="元气",
+        )
+        self.memory._memories.append(old_entry)
+        self.memory.add("new", "new_resp", "元气")
+
+        removed = self.memory.cleanup_old_memories(max_age_days=7)
+        self.assertEqual(removed, 1)
+        self.assertEqual(self.memory.memory_count, 1)
+
+    def test_memory_entry_age(self):
+        """测试记忆条目年龄计算"""
+        entry = MemoryEntry(
+            timestamp=datetime.now().isoformat(),
+            user_message="test",
+            bot_response="test",
+            form="元气",
+        )
+        self.assertLess(entry.age_seconds, 1)
+
+        old_entry = MemoryEntry(
+            timestamp=(datetime.now() - timedelta(days=1)).isoformat(),
+            user_message="old",
+            bot_response="old",
+            form="元气",
+        )
+        self.assertGreater(old_entry.age_seconds, 86000)
 
 
 class TestEmotionManager(unittest.TestCase):
@@ -273,6 +457,72 @@ class TestPerformanceTracker(unittest.TestCase):
         stats = tracker.get_stats("test_op")
         self.assertEqual(stats["count"], 5)
 
+    def test_slow_threshold_alert(self):
+        """测试慢操作告警"""
+        alerted = []
+
+        def alert_callback(name, duration, context):
+            alerted.append((name, duration, context))
+
+        tracker = PerformanceTracker(
+            enabled=True,
+            slow_threshold=0.01,
+            alert_callback=alert_callback,
+        )
+        with tracker.track("slow_op"):
+            time.sleep(0.05)
+
+        stats = tracker.get_stats("slow_op")
+        self.assertEqual(stats["slow_count"], 1)
+        self.assertEqual(len(alerted), 1)
+        self.assertEqual(alerted[0][0], "slow_op")
+
+    def test_p95_stats(self):
+        tracker = PerformanceTracker(enabled=True)
+        for i in range(20):
+            tracker.record("test", float(i) * 0.01)
+        stats = tracker.get_stats("test")
+        self.assertIn("p95", stats)
+        self.assertGreater(stats["p95"], 0)
+
+    def test_context_tracking(self):
+        tracker = PerformanceTracker(enabled=True)
+        tracker.record("op", 0.5, user_id="123", message_length=50)
+        stats = tracker.get_stats("op")
+        self.assertEqual(stats["count"], 1)
+
+    def test_reset(self):
+        tracker = PerformanceTracker(enabled=True)
+        tracker.record("op", 0.1)
+        tracker.reset()
+        stats = tracker.get_all_stats()
+        self.assertEqual(stats, {})
+
+    def test_export_stats(self):
+        tracker = PerformanceTracker(enabled=True, slow_threshold=0.01)
+        tracker.record("op", 0.5)
+        exported = tracker.export_stats()
+        self.assertTrue(exported["enabled"])
+        self.assertEqual(exported["slow_threshold"], 0.01)
+        self.assertIn("operations", exported)
+
+
+class TestExceptions(unittest.TestCase):
+    """测试自定义异常"""
+
+    def test_config_error(self):
+        err = ConfigError("test error")
+        self.assertEqual(err.code, "CONFIG_ERROR")
+        self.assertIn("test error", str(err))
+
+    def test_config_not_found(self):
+        err = ConfigError("not found")
+        self.assertEqual(err.code, "CONFIG_ERROR")
+
+    def test_memory_error(self):
+        err = MemoryError("memory fail")
+        self.assertEqual(err.code, "MEMORY_ERROR")
+
 
 class TestYoimiyaSummerSoul(unittest.TestCase):
     """测试主 Skill 类"""
@@ -284,7 +534,13 @@ class TestYoimiyaSummerSoul(unittest.TestCase):
         self.assertEqual(self.skill.name, "Yoimiya_Summer_Soul_Skill")
         self.assertEqual(self.skill.current_emotion, "元气")
         self.assertEqual(self.skill.language, "zh")
-        self.assertEqual(self.skill.version, "1.1.0")
+        self.assertEqual(self.skill.version, "1.2.0")
+
+    def test_config_manager(self):
+        """测试 ConfigManager 已正确初始化"""
+        self.assertIsNotNone(self.skill._config_manager)
+        config = self.skill._config_manager.get_config()
+        self.assertIn("skill", config)
 
     def test_proactive_chat_default(self):
         self.assertTrue(self.skill.proactive_chat_enabled)
@@ -360,6 +616,17 @@ class TestYoimiyaSummerSoul(unittest.TestCase):
         self.assertIsNotNone(msg)
         self.assertTrue(len(msg) > 0)
 
+    def test_reload_config(self):
+        """测试配置重载"""
+        self.skill.reload_config()
+        # 重载后配置仍然可用
+        config = self.skill._config_manager.get_config()
+        self.assertIn("skill", config)
+
+    def test_memory_auto_cleanup_enabled(self):
+        """测试记忆自动清理已启用"""
+        self.assertTrue(self.skill._memory.auto_cleanup)
+
 
 class TestIntegration(unittest.TestCase):
     """集成测试"""
@@ -374,7 +641,7 @@ class TestIntegration(unittest.TestCase):
         temp_dir = tempfile.mkdtemp()
         memory_path = os.path.join(temp_dir, "memory.json")
         self.skill._memory = EmotionMemory(max_entries=50, storage_path=memory_path)
-        
+
         # 1. 初始状态
         self.assertEqual(self.skill.current_emotion, "元气")
 
@@ -408,7 +675,7 @@ class TestIntegration(unittest.TestCase):
         temp_dir = tempfile.mkdtemp()
         memory_path = os.path.join(temp_dir, "memory.json")
         self.skill._memory = EmotionMemory(max_entries=50, storage_path=memory_path)
-        
+
         self.skill.record_interaction("测试", "收到！", 0.0)
         count_before = self.skill._memory.memory_count
 
@@ -438,6 +705,19 @@ class TestIntegration(unittest.TestCase):
         # 温柔话题
         emotion = self.skill._detect_emotion("你看那片星空")
         self.assertEqual(emotion, "温柔")
+
+    def test_config_cache_performance(self):
+        """测试配置缓存性能提升"""
+        import time
+
+        # 多次调用 _check_emotion_keywords，应该使用缓存
+        start = time.time()
+        for _ in range(100):
+            self.skill._check_emotion_keywords("烟花")
+        duration = time.time() - start
+
+        # 100 次调用应该在 1 秒内完成（缓存生效）
+        self.assertLess(duration, 1.0)
 
 
 if __name__ == "__main__":

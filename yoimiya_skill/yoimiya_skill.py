@@ -1,21 +1,33 @@
-"""Yoimiya Summer Soul Skill v1.1
+"""Yoimiya Summer Soul Skill v1.2
 
 宵宫·夏日灵魂觉醒（统一角色情绪状态系统）
 功能：情感记忆系统、情绪状态系统、多语言支持、动态情绪切换、
       季节事件感知、互动小游戏（烟花/炸弹/回忆）、日记功能、
       主动聊天系统、JSON 配置化提示词、性能监控
+
+v1.2 优化：
+- 引入 ConfigManager 配置缓存，避免重复文件 I/O
+- 本地化文本抽离至独立模块
+- 性能追踪增强（慢操作告警、上下文记录）
+- 自定义异常体系
 """
 
 import json
 import logging
 import os
 import random
-import time
 from typing import Any, Dict, List, Optional
 
+from .config_manager import ConfigManager
 from .emotion_manager import EmotionManager
+from .events import MinigameManager, SeasonalEventManager
+from .localization import (
+    get_emotion_shift_message,
+    get_localized_text,
+    get_proactive_messages,
+)
 from .memory import EmotionMemory
-from .events import SeasonalEventManager, MinigameManager
+from .performance import PerformanceTracker
 
 # 尝试导入 openclaw SDK，如果失败则使用 mock（用于测试）
 try:
@@ -43,7 +55,7 @@ logger = logging.getLogger(__name__)
 
 def setup_logging(level: int = logging.INFO, structured: bool = False) -> None:
     """配置日志系统
-    
+
     Args:
         level: 日志级别
         structured: 是否使用结构化日志（JSON格式）
@@ -53,67 +65,12 @@ def setup_logging(level: int = logging.INFO, structured: bool = False) -> None:
         fmt = '{"timestamp":"%(asctime)s","level":"%(levelname)s","logger":"%(name)s","message":"%(message)s"}'
     else:
         fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    
+
     logging.basicConfig(
         level=level,
         format=fmt,
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-
-
-class PerformanceTracker:
-    """性能追踪器"""
-
-    def __init__(self, enabled: bool = True):
-        self.enabled = enabled
-        self._timings: Dict[str, List[float]] = {}
-
-    def track(self, name: str):
-        """上下文管理器，用于追踪代码块执行时间"""
-        return _PerformanceContext(self, name)
-
-    def record(self, name: str, duration: float) -> None:
-        """记录一次执行时间"""
-        if not self.enabled:
-            return
-        if name not in self._timings:
-            self._timings[name] = []
-        self._timings[name].append(duration)
-
-    def get_stats(self, name: str) -> Dict[str, float]:
-        """获取性能统计"""
-        times = self._timings.get(name, [])
-        if not times:
-            return {}
-        return {
-            "count": len(times),
-            "avg": sum(times) / len(times),
-            "min": min(times),
-            "max": max(times),
-        }
-
-    def get_all_stats(self) -> Dict[str, Dict[str, float]]:
-        """获取所有性能统计"""
-        return {name: self.get_stats(name) for name in self._timings}
-
-
-class _PerformanceContext:
-    """性能追踪上下文"""
-
-    def __init__(self, tracker: PerformanceTracker, name: str):
-        self.tracker = tracker
-        self.name = name
-        self.start_time = 0.0
-
-    def __enter__(self):
-        self.start_time = time.time()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        duration = time.time() - self.start_time
-        self.tracker.record(self.name, duration)
-        if duration > 1.0:  # 超过1秒记录警告
-            logger.warning(f"Slow operation: {self.name} took {duration:.3f}s")
 
 
 class YoimiyaSummerSoul(BaseSkill):
@@ -123,10 +80,20 @@ class YoimiyaSummerSoul(BaseSkill):
         super().__init__()
 
         self._config_path = config_path or self._get_default_config_path()
-        self._load_skill_config()
+
+        # 使用 ConfigManager 管理配置（带缓存）
+        self._config_manager = ConfigManager(
+            config_path=self._config_path,
+            ttl=self._get_config_ttl(),
+        )
+
+        # 加载 skill 配置（合并 performance 和 monitoring）
+        self._skill_config = self._config_manager.get_skill_config()
 
         # 配置日志
-        log_level = getattr(logging, self._skill_config.get("log_level", "INFO"), logging.INFO)
+        log_level = getattr(
+            logging, self._skill_config.get("log_level", "INFO"), logging.INFO
+        )
         structured_logging = self._skill_config.get("structured_logging", False)
         setup_logging(level=log_level, structured=structured_logging)
 
@@ -134,7 +101,7 @@ class YoimiyaSummerSoul(BaseSkill):
         self.description: str = self._skill_config.get(
             "description", "宵宫·夏日灵魂觉醒"
         )
-        self.version: str = self._skill_config.get("version", "1.1.0")
+        self.version: str = self._skill_config.get("version", "1.2.0")
         self.language: str = self._skill_config.get("default_language", "zh")
         self.auto_shift_probability: float = self._skill_config.get(
             "auto_shift_probability", 0.15
@@ -155,10 +122,12 @@ class YoimiyaSummerSoul(BaseSkill):
         # 当前情绪状态（不再是"形态"，而是情绪）
         self.current_emotion: str = "元气"
 
-        # 性能监控
+        # 性能监控（增强版）
         perf_config = self._skill_config.get("performance", {})
+        slow_threshold = perf_config.get("slow_threshold", 1.0)
         self._perf_tracker = PerformanceTracker(
-            enabled=perf_config.get("performance_tracking", True)
+            enabled=perf_config.get("performance_tracking", True),
+            slow_threshold=slow_threshold,
         )
 
         # 初始化子系统
@@ -168,6 +137,11 @@ class YoimiyaSummerSoul(BaseSkill):
             storage_path=os.path.join(
                 os.path.dirname(__file__), "data", "memory.json"
             ),
+            auto_cleanup=self._skill_config.get("memory_auto_cleanup", True),
+            cleanup_interval=self._skill_config.get(
+                "memory_cleanup_interval", 86400
+            ),
+            max_age_days=self._skill_config.get("memory_max_age_days", 7),
         )
         self._event_manager = SeasonalEventManager(self._config_path)
         self._minigame_manager = MinigameManager(self._config_path)
@@ -185,23 +159,17 @@ class YoimiyaSummerSoul(BaseSkill):
         """获取默认配置文件路径"""
         return os.path.join(os.path.dirname(__file__), "config.json")
 
-    def _load_skill_config(self) -> None:
-        """加载 Skill 配置"""
-        if not os.path.exists(self._config_path):
-            logger.error(f"Config file not found: {self._config_path}")
-            raise FileNotFoundError(f"Config file not found: {self._config_path}")
-
-        try:
-            with open(self._config_path, "r", encoding="utf-8") as f:
-                config = json.load(f)
-            self._skill_config = config.get("skill", {})
-            # 合并 performance 和 monitoring 配置
-            self._skill_config.update(config.get("performance", {}))
-            self._skill_config.update(config.get("monitoring", {}))
-            logger.debug("Skill config loaded successfully")
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in config file: {e}")
-            raise
+    def _get_config_ttl(self) -> int:
+        """从环境变量或配置获取缓存 TTL"""
+        # 优先从环境变量获取
+        env_ttl = os.environ.get("YOIMIYA_CONFIG_TTL")
+        if env_ttl:
+            try:
+                return int(env_ttl)
+            except ValueError:
+                pass
+        # 默认 1 小时
+        return 3600
 
     # ============================================================
     # 辅助方法
@@ -209,7 +177,7 @@ class YoimiyaSummerSoul(BaseSkill):
 
     def _set_system_prompt(self, ctx: Any) -> None:
         """设置系统提示词（包含情绪状态注入）"""
-        from .prompts import get_system_prompt, get_emotion_state_addition
+        from .prompts import get_emotion_state_addition, get_system_prompt
 
         base_prompt = get_system_prompt(self.language)
 
@@ -232,11 +200,9 @@ class YoimiyaSummerSoul(BaseSkill):
         if not self.emotion_keywords_enabled:
             return None
 
-        # 从配置文件加载情感关键词
+        # 从 ConfigManager 获取情感关键词（带缓存）
         try:
-            with open(self._config_path, "r", encoding="utf-8") as f:
-                config = json.load(f)
-            emotion_keywords = config.get("emotion_keywords", {})
+            emotion_keywords = self._config_manager.get_emotion_keywords()
         except Exception:
             return None
 
@@ -262,126 +228,12 @@ class YoimiyaSummerSoul(BaseSkill):
         if not self.proactive_chat_enabled:
             return None
 
-        messages = {
-            "zh": [
-                "*(托腮看着你)* 旅行者，你在想什么呢？跟我说说嘛~",
-                "*(突然凑近)* 嘿！我刚刚想到一个新的烟花配方，你要不要听听看？",
-                "*(望着窗外)* 今天的夕阳好美啊……等下一起去屋顶看星星好不好？",
-                "*(伸了个懒腰)* 唔……有点困了。旅行者，给我讲个故事提神好不好？",
-                "*(眼睛闪闪发光)* 旅行者旅行者！我刚刚看到一只好可爱的猫！你要不要去看看？",
-            ],
-            "en": [
-                "*(resting chin on hands, looking at you)* Traveler, what are you thinking about? Tell me~",
-                "*(suddenly leaning in)* Hey! I just thought of a new firework recipe, want to hear it?",
-                "*(looking out the window)* Today's sunset is so beautiful... Want to go to the rooftop to watch the stars later?",
-                "*(stretching)* Mmm... a bit sleepy. Traveler, tell me a story to wake me up?",
-                "*(eyes sparkling)* Traveler, Traveler! I just saw such a cute cat! Want to go see it?",
-            ],
-            "ja": [
-                "*(頬杖をついてあなたを見つめる)* 旅人、何考えてるの？教えてよ~",
-                "*(突然近づいて)* ねえ！新しい花火の配合を思いついたんだ、聞きたい？",
-                "*(窓の外を見る)* 今日の夕陽が綺麗だね……後で屋根の上で星を見に行かない？",
-                "*(伸びをする)* うーん……少し眠いな。旅人、目が覚めるような話をして？",
-                "*(目を輝かせる)* 旅人旅人！さっきすっごく可愛い猫を見たんだ！一緒に見に行かない？",
-            ],
-        }
-        lang_messages = messages.get(self.language, messages["zh"])
-        return random.choice(lang_messages)
+        messages = get_proactive_messages(self.language)
+        return random.choice(messages)
 
     def _get_localized_text(self, key: str, **kwargs: Any) -> str:
         """获取本地化文本"""
-        texts = {
-            "zh": {
-                "unknown_emotion": "欸？'{emotion}'是什么情绪呀，我没听说过呢~\n当前情绪：{current}",
-                "emotion_hint": "欸？你想了解什么情绪呀？当前情绪：{current}",
-                "current_emotion": "当前情绪：{emotion}",
-                "stats_title": "📊 宵宫属性",
-                "memory_cleared": "*(歪头)* 嗯……之前的记忆？好像被一阵风吹走了呢！不过没关系，我们可以创造新的回忆！🎆",
-                "diary_not_ready": "*(翻着手账)* 唔……对话还不够多呢，再聊一会儿再写手账吧！",
-                "language_changed": "语言已切换为：{lang}",
-                "unknown_language": "不支持的语言：{lang}。支持：zh / en / ja",
-                "game_list": "🎮 可用小游戏：\n",
-                "unknown_game": "不知道这个游戏呢……可用游戏：\n",
-                "proactive_on": "主动聊天已开启！我会时不时找你聊天哦~",
-                "proactive_off": "主动聊天已关闭。我会安静等你找我啦。",
-                "emotion_changed": "*(情绪变化)* {message}",
-                "help_text": (
-                    "**宵宫·夏日灵魂觉醒 v1.1** 🎆\n\n"
-                    "📋 指令列表：\n"
-                    "- `情绪` - 查看当前情绪状态\n"
-                    "- `语言 <zh/en/ja>` - 切换语言\n"
-                    "- `日记` - 查看对话总结\n"
-                    "- `清空记忆` - 清空情感记忆\n"
-                    "- `小游戏 <游戏名>` - 玩互动小游戏\n"
-                    "- `主动聊天 <开/关>` - 开启/关闭主动聊天\n"
-                    "- `帮助` - 显示此帮助信息\n\n"
-                    "🎭 情绪状态会根据对话内容自然流动\n"
-                    "💫 对话中有 {prob}% 概率情绪波动\n"
-                    "💬 主动聊天：{proactive}"
-                ),
-            },
-            "en": {
-                "unknown_emotion": "Huh? I've never heard of the '{emotion}' emotion~\nCurrent emotion: {current}",
-                "emotion_hint": "Huh? What emotion do you want to know about? Current emotion: {current}",
-                "current_emotion": "Current emotion: {emotion}",
-                "stats_title": "📊 Yoimiya Stats",
-                "memory_cleared": "*(tilts head)* Hmm... previous memories? Seems like they were blown away by the wind! But it's okay, we can create new ones! 🎆",
-                "diary_not_ready": "*(flipping through diary)* Mmm... not enough conversations yet, let's chat a bit more before writing the diary!",
-                "language_changed": "Language changed to: {lang}",
-                "unknown_language": "Unsupported language: {lang}. Supported: zh / en / ja",
-                "game_list": "🎮 Available minigames:\n",
-                "unknown_game": "I don't know that game... Available games:\n",
-                "proactive_on": "Proactive chat is on! I'll chat with you from time to time~",
-                "proactive_off": "Proactive chat is off. I'll wait quietly for you to find me.",
-                "emotion_changed": "*(emotional shift)* {message}",
-                "help_text": (
-                    "**Yoimiya: Summer Soul Awakening v1.1** 🎆\n\n"
-                    "📋 Command List:\n"
-                    "- `emotion` - View current emotional state\n"
-                    "- `language <zh/en/ja>` - Switch language\n"
-                    "- `diary` - View conversation summary\n"
-                    "- `clear memory` - Clear emotional memory\n"
-                    "- `minigame <name>` - Play interactive minigames\n"
-                    "- `proactive chat <on/off>` - Enable/disable proactive chat\n"
-                    "- `help` - Show this help\n\n"
-                    "🎭 Emotional states flow naturally based on conversation\n"
-                    "💫 {prob}% chance of emotional fluctuation during conversation\n"
-                    "💬 Proactive chat: {proactive}"
-                ),
-            },
-            "ja": {
-                "unknown_emotion": "え？「{emotion}」って何の感情？聞いたことないよ~\n現在の感情：{current}",
-                "emotion_hint": "え？どの感情を知りたいの？現在の感情：{current}",
-                "current_emotion": "現在の感情：{emotion}",
-                "stats_title": "📊 宵宮ステータス",
-                "memory_cleared": "*(首をかしげる)* うーん……前の記憶？風に吹き飛ばされちゃったみたい！でも大丈夫、新しい思い出を作ろう！🎆",
-                "diary_not_ready": "*(手帳をめくる)* うーん……まだ会話が足りないね、もう少しおしゃべりしてから日記を書こう！",
-                "language_changed": "言語を変更しました：{lang}",
-                "unknown_language": "未対応の言語：{lang}。対応：zh / en / ja",
-                "game_list": "🎮 利用可能なミニゲーム：\n",
-                "unknown_game": "そのゲームは知らないな……利用可能なゲーム：\n",
-                "proactive_on": "主动チャットがオンになったよ！時々話しかけるね~",
-                "proactive_off": "主动チャットがオフになったよ。静かに待ってるね。",
-                "emotion_changed": "*(感情の変化)* {message}",
-                "help_text": (
-                    "**宵宮·夏の魂の覚醒 v1.1** 🎆\n\n"
-                    "📋 コマンド一覧：\n"
-                    "- `感情` - 現在の感情状態を確認\n"
-                    "- `言語 <zh/en/ja>` - 言語を切り替え\n"
-                    "- `日記` - 会話のまとめを見る\n"
-                    "- `記憶消去` - 感情記憶を消去\n"
-                    "- `ミニゲーム <名前>` - インタラクティブなミニゲームを遊ぶ\n"
-                    "- `主动チャット <オン/オフ>` - 主动チャットのオン/オフ\n"
-                    "- `ヘルプ` - このヘルプを表示\n\n"
-                    "🎭 感情状態は会話の内容に応じて自然に流れる\n"
-                    "💫 会話中に {prob}% の確率で感情の起伏\n"
-                    "💬 主动チャット：{proactive}"
-                ),
-            },
-        }
-        lang_texts = texts.get(self.language, texts["zh"])
-        text = lang_texts.get(key, key)
-        return text.format(**kwargs)
+        return get_localized_text(key, self.language, **kwargs)
 
     # ============================================================
     # 事件处理器
@@ -390,10 +242,10 @@ class YoimiyaSummerSoul(BaseSkill):
     @on_message()
     async def handle_message(self, ctx: Any) -> None:
         """处理普通消息：情绪检测、情感关键词、季节事件、记忆记录、主动聊天"""
-        with self._perf_tracker.track("handle_message"):
+        user_id = getattr(ctx, "user_id", "anonymous")
+        with self._perf_tracker.track("handle_message", user_id=user_id):
             try:
                 message = getattr(ctx, "message", "")
-                user_id = getattr(ctx, "user_id", "anonymous")
 
                 # 检查季节事件（首次对话时）
                 if self._message_count == 0:
@@ -409,26 +261,9 @@ class YoimiyaSummerSoul(BaseSkill):
                     old_emotion = self.current_emotion
                     self.current_emotion = detected
                     logger.info(f"Emotion shift: {old_emotion} -> {detected}")
-                    
+
                     # 发送情绪变化提示（不喧宾夺主）
-                    emotion_messages = {
-                        "元气": {
-                            "zh": "*(眼睛亮了起来)* 嘿嘿，说到这个我就来劲了！",
-                            "en": "*(eyes light up)* Hehe, you got me excited talking about this!",
-                            "ja": "*(目が輝く)* えへへ、これの話をすると私も張り切っちゃう！",
-                        },
-                        "热血": {
-                            "zh": "*(握紧了拳头)* 嗯！这种时候就该拿出干劲来！",
-                            "en": "*(clenches fist)* Yeah! This is when we need to give it our all!",
-                            "ja": "*(拳を握る)* うん！こういう時は気合を入れないとね！",
-                        },
-                        "温柔": {
-                            "zh": "*(声音变得轻柔)* 啊……这个话题，让我有点感触呢。",
-                            "en": "*(voice becomes gentle)* Ah... this topic, it touches me a bit.",
-                            "ja": "*(声が優しくなる)* ああ……この話題、少し感傷的になっちゃうな。",
-                        },
-                    }
-                    msg = emotion_messages.get(detected, {}).get(self.language, "")
+                    msg = get_emotion_shift_message(detected, self.language)
                     if msg:
                         await ctx.send(msg)
 
@@ -565,7 +400,9 @@ class YoimiyaSummerSoul(BaseSkill):
                 await ctx.send(self._get_localized_text("proactive_off"))
             else:
                 status = "开启" if self.proactive_chat_enabled else "关闭"
-                await ctx.send(f"当前主动聊天状态：{status}\n请输入：`主动聊天 开` 或 `主动聊天 关`")
+                await ctx.send(
+                    f"当前主动聊天状态：{status}\n请输入：`主动聊天 开` 或 `主动聊天 关`"
+                )
 
         except Exception as e:
             logger.error(f"Error in cmd_proactive_chat: {e}", exc_info=True)
@@ -576,7 +413,9 @@ class YoimiyaSummerSoul(BaseSkill):
         try:
             prob = int(self.auto_shift_probability * 100)
             proactive = "ON" if self.proactive_chat_enabled else "OFF"
-            await ctx.send(self._get_localized_text("help_text", prob=prob, proactive=proactive))
+            await ctx.send(
+                self._get_localized_text("help_text", prob=prob, proactive=proactive)
+            )
         except Exception as e:
             logger.error(f"Error in cmd_help: {e}", exc_info=True)
 
@@ -588,7 +427,7 @@ class YoimiyaSummerSoul(BaseSkill):
             if not stats:
                 await ctx.send("*(歪头)* 还没有性能数据呢，再聊一会儿吧！")
                 return
-            
+
             lines = ["**性能统计** 📊"]
             for name, data in stats.items():
                 lines.append(
@@ -596,7 +435,9 @@ class YoimiyaSummerSoul(BaseSkill):
                     f"  调用次数: {data['count']}\n"
                     f"  平均耗时: {data['avg']:.3f}s\n"
                     f"  最小耗时: {data['min']:.3f}s\n"
-                    f"  最大耗时: {data['max']:.3f}s"
+                    f"  最大耗时: {data['max']:.3f}s\n"
+                    f"  P95 耗时: {data.get('p95', 0):.3f}s\n"
+                    f"  慢操作数: {data.get('slow_count', 0)}"
                 )
             await ctx.send("\n".join(lines))
         except Exception as e:
@@ -640,6 +481,11 @@ class YoimiyaSummerSoul(BaseSkill):
             "proactive_chat": self.proactive_chat_enabled,
         }
 
-    def get_performance_stats(self) -> Dict[str, Dict[str, float]]:
+    def get_performance_stats(self) -> Dict[str, Dict[str, Any]]:
         """获取性能统计"""
         return self._perf_tracker.get_all_stats()
+
+    def reload_config(self) -> None:
+        """强制重新加载配置"""
+        self._config_manager.reload()
+        logger.info("Config reloaded manually")
