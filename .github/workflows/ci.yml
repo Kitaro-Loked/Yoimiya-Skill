@@ -28,17 +28,17 @@ jobs:
     - name: Lint with flake8
       run: |
         # 检查语法错误和未定义变量
-        flake8 yoimiya_skill/ tests/ --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 scripts/ tests/ --count --select=E9,F63,F7,F82 --show-source --statistics
         # 检查代码风格（仅警告，不阻断）
-        flake8 yoimiya_skill/ tests/ --count --exit-zero --max-complexity=15 --max-line-length=127 --statistics
+        flake8 scripts/ tests/ --count --exit-zero --max-complexity=15 --max-line-length=127 --statistics
     
     - name: Check code formatting with black
       run: |
-        black --check --diff yoimiya_skill/ tests/ || true
+        black --check --diff scripts/ tests/ || true
     
     - name: Check import sorting with isort
       run: |
-        isort --check-only --diff yoimiya_skill/ tests/ || true
+        isort --check-only --diff scripts/ tests/ || true
 
   test:
     runs-on: ubuntu-latest
@@ -65,8 +65,8 @@ jobs:
     
     - name: Check JSON validity
       run: |
-        python -c "import json; json.load(open('yoimiya_skill/config.json', encoding='utf-8')); print('config.json OK')"
-        python -c "import json; json.load(open('yoimiya_skill/prompts.json', encoding='utf-8')); print('prompts.json OK')"
+        python -c "import json; json.load(open('references/config.json', encoding='utf-8')); print('config.json OK')"
+        python -c "import json; json.load(open('references/prompts.json', encoding='utf-8')); print('prompts.json OK')"
 
   type-check:
     runs-on: ubuntu-latest
@@ -85,4 +85,4 @@ jobs:
     
     - name: Type check with mypy
       run: |
-        mypy yoimiya_skill/ --ignore-missing-imports --show-error-codes || true
+        mypy scripts/ --ignore-missing-imports --show-error-codes || true
