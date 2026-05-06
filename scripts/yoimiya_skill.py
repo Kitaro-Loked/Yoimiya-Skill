@@ -183,7 +183,10 @@ class YoimiyaSummerSoul(BaseSkill):
 
     def _get_default_config_path(self) -> str:
         """获取默认配置文件路径"""
-        return os.path.join(os.path.dirname(__file__), "config.json")
+        # AgentSkills 格式：配置文件在 references/ 目录下
+        script_dir = os.path.dirname(__file__)
+        skill_root = os.path.dirname(script_dir)
+        return os.path.join(skill_root, "references", "config.json")
 
     def _load_skill_config(self) -> None:
         """加载 Skill 配置"""

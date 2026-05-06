@@ -34,11 +34,11 @@ mock_sdk.on_message = mock_on_message
 sys.modules['openclaw'] = type(sys)('openclaw')
 sys.modules['openclaw.sdk'] = mock_sdk
 
-from yoimiya_skill.yoimiya_skill import YoimiyaSummerSoul, PerformanceTracker
-from yoimiya_skill.memory import EmotionMemory, MemoryEntry
-from yoimiya_skill.emotion_manager import EmotionManager, EmotionState
-from yoimiya_skill.events import SeasonalEventManager, MinigameManager
-from yoimiya_skill.prompts import get_system_prompt, get_supported_languages, get_all_emotion_states
+from scripts.yoimiya_skill import YoimiyaSummerSoul, PerformanceTracker
+from scripts.memory import EmotionMemory, MemoryEntry
+from scripts.emotion_manager import EmotionManager, EmotionState
+from scripts.events import SeasonalEventManager, MinigameManager
+from scripts.prompts import get_system_prompt, get_supported_languages, get_all_emotion_states
 
 
 class TestPrompts(unittest.TestCase):

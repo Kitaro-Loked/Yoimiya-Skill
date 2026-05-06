@@ -28,8 +28,11 @@ class PromptLoader:
         if file_path is not None:
             self._file_path = file_path
         elif self._file_path is None:
+            # AgentSkills 格式：提示词文件在 references/ 目录下
+            script_dir = os.path.dirname(__file__)
+            skill_root = os.path.dirname(script_dir)
             self._file_path = os.path.join(
-                os.path.dirname(__file__), "prompts.json"
+                skill_root, "references", "prompts.json"
             )
 
     def _load(self) -> Dict:

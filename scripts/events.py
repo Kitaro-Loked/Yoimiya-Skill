@@ -14,9 +14,13 @@ class SeasonalEventManager:
     """季节事件管理器"""
 
     def __init__(self, config_path: Optional[str] = None):
-        self.config_path = config_path or os.path.join(
-            os.path.dirname(__file__), "config.json"
-        )
+        if config_path is not None:
+            self.config_path = config_path
+        else:
+            # AgentSkills 格式：配置文件在 references/ 目录下
+            script_dir = os.path.dirname(__file__)
+            skill_root = os.path.dirname(script_dir)
+            self.config_path = os.path.join(skill_root, "references", "config.json")
         self._events: Dict[str, Dict[str, Any]] = {}
         self._load_events()
 
@@ -76,9 +80,13 @@ class MinigameManager:
     """小游戏管理器 - 宵宫专属：烟花小游戏、炸弹小游戏"""
 
     def __init__(self, config_path: Optional[str] = None):
-        self.config_path = config_path or os.path.join(
-            os.path.dirname(__file__), "config.json"
-        )
+        if config_path is not None:
+            self.config_path = config_path
+        else:
+            # AgentSkills 格式：配置文件在 references/ 目录下
+            script_dir = os.path.dirname(__file__)
+            skill_root = os.path.dirname(script_dir)
+            self.config_path = os.path.join(skill_root, "references", "config.json")
         self._minigames: Dict[str, Dict[str, Any]] = {}
         self._load_minigames()
 
