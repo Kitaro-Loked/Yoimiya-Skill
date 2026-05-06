@@ -1,0 +1,2 @@
+# OpenClaw SDK - 运行时依赖（CI 中通过 mock 处理）
+# openclaw-sdk>=0.1.0

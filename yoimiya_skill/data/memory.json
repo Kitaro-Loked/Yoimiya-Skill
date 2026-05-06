@@ -1,0 +1,15 @@
+{
+  "memories": [
+    {
+      "timestamp": "2026-05-06T18:08:55.867590",
+      "user_message": "你好",
+      "bot_response": "你好呀！",
+      "form": "夏祭",
+      "emotion_score": 0.0,
+      "keywords": [],
+      "context_summary": ""
+    }
+  ],
+  "preferences": {},
+  "last_updated": "2026-05-06T18:08:55.867928"
+}
